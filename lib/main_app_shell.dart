@@ -64,7 +64,7 @@ class _MainAppShellState extends State<MainAppShell> {
 }
 
 // ==========================================
-// 2. HOME SCREEN (With 30-Min Logic)
+// 2. HOME SCREEN (With Merged Logic & UI)
 // ==========================================
 class HomeScreen extends StatefulWidget {
   final Function(int) onTabChange;
@@ -154,14 +154,48 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('FamCare', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: const Color(0xFF0EA5E9))),
-        backgroundColor: Colors.white, elevation: 0,
+        title: Text('FamCare', 
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: const Color(0xFF0EA5E9))),
+        backgroundColor: Colors.white,
+        elevation: 0,
         actions: [
-          IconButton(icon: const Icon(LucideIcons.logOut, color: Colors.redAccent), 
-          onPressed: () async {
-            await _supabase.auth.signOut();
-            if (mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (context) => const LoginScreen()));
-          }),
+          // ✅ 3-DOT MENU INTEGRATED HERE
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.black), 
+            onSelected: (value) async {
+              if (value == 'settings') {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Opening Settings...')));
+              } else if (value == 'hindi') {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Language switched to हिंदी (Hindi)')));
+              } else if (value == 'darkmode') {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Dark Mode toggled')));
+              } else if (value == 'logout') {
+                await _supabase.auth.signOut();
+                if (mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (context) => const LoginScreen()));
+              }
+            },
+            itemBuilder: (BuildContext context) {
+              return [
+                const PopupMenuItem<String>(
+                  value: 'settings',
+                  child: Row(children: [Icon(Icons.settings, color: Colors.black54), SizedBox(width: 10), Text('Settings')]),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'hindi',
+                  child: Row(children: [Icon(Icons.language, color: Colors.black54), SizedBox(width: 10), Text('हिंदी (Hindi)')]),
+                ),
+                const PopupMenuItem<String>(
+                  value: 'darkmode',
+                  child: Row(children: [Icon(Icons.dark_mode, color: Colors.black54), SizedBox(width: 10), Text('Dark Mode')]),
+                ),
+                const PopupMenuDivider(), 
+                const PopupMenuItem<String>(
+                  value: 'logout',
+                  child: Row(children: [Icon(Icons.logout, color: Colors.redAccent), SizedBox(width: 10), Text('Logout', style: TextStyle(color: Colors.redAccent))]),
+                ),
+              ];
+            },
+          ),
         ],
       ),
       body: _isLoading
@@ -176,53 +210,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildWelcomeSection(displayName),
                     const SizedBox(height: 25),
                     
-                    // --- DYNAMIC NEXT MEDICINE SECTION ---
                     if (_upcomingMeds.isNotEmpty) ...[
                       const Text('DUE SOON', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.2)),
                       const SizedBox(height: 10),
-                      _buildSummaryCard(
-                        context, 'Medicine Reminder', 
-                        'Time to take: ${_upcomingMeds[0]['name']} at ${_upcomingMeds[0]['time']}', 
-                        LucideIcons.pill, Colors.orange,
-                        () => widget.onTabChange(1), 
-                      ),
+                      _buildSummaryCard(context, 'Medicine Reminder', 'Time to take: ${_upcomingMeds[0]['name']} at ${_upcomingMeds[0]['time']}', LucideIcons.pill, Colors.orange, () => widget.onTabChange(1)),
                     ] else ...[
-                      _buildSummaryCard(
-                        context, 'No Immediate Meds', 'Check your full schedule here', 
-                        LucideIcons.pill, Colors.grey,
-                        () => widget.onTabChange(1), 
-                      ),
+                      _buildSummaryCard(context, 'No Immediate Meds', 'Check your full schedule here', LucideIcons.pill, Colors.grey, () => widget.onTabChange(1)),
                     ],
                     
                     const SizedBox(height: 15),
-
-                    // Vitals Card
-                    _buildSummaryCard(
-                      context, 'Health Tracker', 'Log or view your latest vitals', 
-                      LucideIcons.heartPulse, const Color(0xFF0EA5E9),
-                      () => widget.onTabChange(2), 
-                    ),
+                    _buildSummaryCard(context, 'Health Tracker', 'Log or view your latest vitals', LucideIcons.heartPulse, const Color(0xFF0EA5E9), () => widget.onTabChange(2)),
                     const SizedBox(height: 15),
-
-                    // Family History (Activity Feed)
-                    _buildSummaryCard(
-                      context, 'Family Activity', 'See what others are doing', 
-                      LucideIcons.history, Colors.green,
-                      () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ActivityFeedScreen())),
-                    ),
+                    _buildSummaryCard(context, 'Family Activity', 'See what others are doing', LucideIcons.history, Colors.green, () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ActivityFeedScreen()))),
                     const SizedBox(height: 15),
-
-                    // Vault Card
-                    _buildSummaryCard(
-                      context, 'Medical Vault', 'Stored prescriptions & reports', 
-                      LucideIcons.fileText, Colors.purple,
-                      () => widget.onTabChange(3),
-                    ),
+                    _buildSummaryCard(context, 'Medical Vault', 'Stored prescriptions & reports', LucideIcons.fileText, Colors.purple, () => widget.onTabChange(3)),
 
                     const SizedBox(height: 30),
                     const Text('Quick Actions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 15),
-                    
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -240,6 +245,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // --- WIDGET BUILDERS ---
   Widget _buildWelcomeSection(String userName) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
