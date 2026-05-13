@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class VitalsScreen extends StatefulWidget {
   const VitalsScreen({super.key});
@@ -115,7 +114,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Log Health Vitals', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text('Log Health Vitals', style: TextStyle(fontWeight: FontWeight.bold)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -160,7 +159,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('Vitals Tracker', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text('Vitals Tracker', style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
         backgroundColor: Colors.white,
         elevation: 0,
@@ -180,7 +179,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
                     children: [
                       const Icon(LucideIcons.history, size: 20, color: Colors.grey),
                       const SizedBox(width: 10),
-                      Text('Recent Logs', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text('Recent Logs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     ],
                   ),
                   const SizedBox(height: 15),

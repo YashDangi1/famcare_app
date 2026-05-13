@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class VitalsScreen extends StatefulWidget {
   const VitalsScreen({super.key});
@@ -67,7 +66,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text('Health & Adherence', 
-          style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+          style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -124,7 +123,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
 
                     const SizedBox(height: 10),
                     Text('Medication History', 
-                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 15),
 
                     // --- 3. LOGS LIST ---

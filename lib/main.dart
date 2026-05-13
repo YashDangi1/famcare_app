@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 // ⚠️ IN IMPORTS KO DHAYAN SE DEKHO
 import 'login_screen.dart';
@@ -35,8 +34,8 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        textTheme: GoogleFonts.poppinsTextTheme(),
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0EA5E9)),
+        fontFamily: 'Roboto',
       ),
       home: const AuthCheck(),
     );

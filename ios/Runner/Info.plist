@@ -4,6 +4,10 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>FamCare needs camera access to scan prescriptions and capture medical documents.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>FamCare needs photo library access to select prescription images.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

@@ -8,6 +8,7 @@ class Medicine {
   DateTime? morningTime;
   DateTime? afternoonTime;
   DateTime? nightTime;
+  String? imagePath;
 
   Medicine({
     required this.name,
@@ -19,6 +20,7 @@ class Medicine {
     this.morningTime,
     this.afternoonTime,
     this.nightTime,
+    this.imagePath,
   });
 
   factory Medicine.fromJson(Map<String, dynamic> json) {
@@ -29,6 +31,7 @@ class Medicine {
       afternoon: json["afternoon"] ?? 0,
       night: json["night"] ?? 0,
       instructions: json["instructions"] ?? "",
+      imagePath: json["image_path"],
     );
   }
 
@@ -40,6 +43,7 @@ class Medicine {
       "afternoon": afternoon,
       "night": night,
       "instructions": instructions,
+      "image_path": imagePath,
     };
   }
 }

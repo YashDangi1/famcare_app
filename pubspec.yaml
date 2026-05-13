@@ -22,6 +22,7 @@ dependencies:
 
   # 📸 CAMERA & IMAGE
   image_picker: ^1.1.2
+  path_provider: ^2.1.4
 
   # 🤖 AI & OCR (NEW)
   google_mlkit_text_recognition: ^0.13.0
@@ -30,7 +31,7 @@ dependencies:
   # 🎨 UI & FONTS
   google_fonts: ^6.3.3
   lucide_icons: ^0.257.0
-  audioplayers: ^6.0.0
+  audioplayers: ^6.6.0
 
 dev_dependencies:
   flutter_test:

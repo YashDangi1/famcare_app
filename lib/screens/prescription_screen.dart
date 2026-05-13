@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 // Services aur Models ke imports
 import '../models/medicine_model.dart';
@@ -46,7 +45,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text("Add New Medicine", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+          title: Text("Add New Medicine", style: TextStyle(fontWeight: FontWeight.bold)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -147,7 +146,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text("Medical Vault", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text("Medical Vault", style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,

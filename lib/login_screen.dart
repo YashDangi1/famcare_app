@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -68,10 +67,10 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 60), 
         Text(
           _isSigningIn ? 'Welcome back!' : 'Create an account',
-          style: GoogleFonts.poppins(
+          style: const TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
-            color: const Color(0xFF0EA5E9),
+            color: Color(0xFF0EA5E9),
           ),
         ),
         const SizedBox(height: 8),
@@ -158,7 +157,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ? const CircularProgressIndicator(color: Colors.white)
                 : Text(
                     _isSigningIn ? 'Sign In' : 'Sign Up',
-                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
           ),
         ),

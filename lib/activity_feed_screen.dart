@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class ActivityFeedScreen extends StatefulWidget {
   const ActivityFeedScreen({super.key});
@@ -80,7 +79,7 @@ class _ActivityFeedScreenState extends State<ActivityFeedScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('Activity Feed', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text('Activity Feed', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,

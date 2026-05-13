@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'history_service.dart';
+import 'services/ocr_service.dart';
 
 class PrescriptionScreen extends StatefulWidget {
   const PrescriptionScreen({super.key});
@@ -15,9 +15,13 @@ class PrescriptionScreen extends StatefulWidget {
 
 class _PrescriptionScreenState extends State<PrescriptionScreen> {
   final _supabase = Supabase.instance.client;
+  final _ocrService = OCRService();
   bool _isLoading = true;
   bool _isUploading = false;
+  bool _isScanningOCR = false;
   List<dynamic> _prescriptions = [];
+  List<Map<String, String>> _scannedMeds = [];
+  String _lastScannedText = '';
   String? _currentGroupId;
   String? _myStatus;
 
@@ -80,7 +84,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: Text('Prescription Details', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text('Prescription Details', style: TextStyle(fontWeight: FontWeight.bold)),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -154,12 +158,205 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
     }
   }
 
+  Future<void> _scanPrescriptionOCR(ImageSource source) async {
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: source, imageQuality: 70);
+    if (image == null) return;
+
+    setState(() {
+      _isScanningOCR = true;
+      _scannedMeds = [];
+      _lastScannedText = '';
+    });
+
+    try {
+      final extractedText = await _ocrService.extractText(File(image.path));
+      _lastScannedText = extractedText;
+      _scannedMeds = _parseMedicinesFromText(extractedText);
+
+      if (_scannedMeds.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No medicines found. Try a clearer image.'))
+          );
+        }
+      } else {
+        _showScannedMedsDialog();
+      }
+    } catch (e) {
+      debugPrint('OCR Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('OCR failed: $e'), backgroundColor: Colors.red)
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isScanningOCR = false);
+    }
+  }
+
+  List<Map<String, String>> _parseMedicinesFromText(String text) {
+    final List<Map<String, String>> meds = [];
+    final lines = text.split('\n');
+
+    final timePatterns = [
+      RegExp(r'(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)'),
+      RegExp(r'morning|afternoon|evening|night|bedtime', caseSensitive: false),
+    ];
+
+    final medicinePatterns = [
+      RegExp(r'^([A-Za-z]+(?:\s+[A-Za-z]+){0,3})\s*[-–]?\s*(\d+)', caseSensitive: false),
+      RegExp(r'^([A-Za-z]+(?:\s+[A-Za-z]+){0,3})\s*\d+', caseSensitive: false),
+    ];
+
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i].trim();
+      if (line.isEmpty) continue;
+
+      String? medName;
+      String? dosage;
+      String? time;
+
+      for (var pattern in timePatterns) {
+        final match = pattern.firstMatch(line);
+        if (match != null) {
+          if (match.groupCount >= 3 && match.group(1) != null) {
+            int hour = int.parse(match.group(1)!);
+            final minute = match.group(2)!;
+            var period = match.group(3)!.toUpperCase();
+            if (period == 'PM' && hour != 12) hour += 12;
+            if (period == 'AM' && hour == 12) hour = 0;
+            final h12 = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+            time = '${h12.toString().padLeft(2, '0')}:$minute ${period == 'PM' ? 'PM' : 'AM'}';
+          } else {
+            time = match.group(0)!.toLowerCase().contains('morning') ? '08:00 AM' :
+                   match.group(0)!.toLowerCase().contains('afternoon') ? '02:00 PM' :
+                   match.group(0)!.toLowerCase().contains('evening') ? '06:00 PM' :
+                   match.group(0)!.toLowerCase().contains('night') || match.group(0)!.toLowerCase().contains('bedtime') ? '10:00 PM' : '08:00 AM';
+          }
+          break;
+        }
+      }
+
+      for (var pattern in medicinePatterns) {
+        final match = pattern.firstMatch(line);
+        if (match != null) {
+          medName = match.group(1)?.trim() ?? '';
+          if (match.groupCount >= 2 && match.group(2) != null) {
+            dosage = '${match.group(2)} tablet(s)';
+          }
+          break;
+        }
+      }
+
+      if (medName != null && medName.length > 2 && !medName.toLowerCase().contains('doctor') && !medName.toLowerCase().contains('patient')) {
+        meds.add({
+          'name': medName,
+          'dosage': dosage ?? '1 tablet',
+          'time': time ?? '08:00 AM',
+        });
+      }
+    }
+
+    if (meds.isEmpty && text.isNotEmpty) {
+      meds.add({'name': 'Review Prescription', 'dosage': 'See details', 'time': 'Manual Entry'});
+    }
+
+    return meds;
+  }
+
+  void _showScannedMedsDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(children: [
+          const Icon(LucideIcons.scan, color: Color(0xFF0EA5E9)),
+          const SizedBox(width: 10),
+          Text('Scanned Medicines', style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_lastScannedText.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
+                  child: Text(_lastScannedText.length > 200 ? '${_lastScannedText.substring(0, 200)}...' : _lastScannedText, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                ),
+                const SizedBox(height: 10),
+              ],
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columnSpacing: 12,
+                  columns: const [
+                    DataColumn(label: Text('Medicine', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Dosage', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Time', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Alarm', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: _scannedMeds.map((med) {
+                    return DataRow(cells: [
+                      DataCell(Text(med['name'] ?? '', style: const TextStyle(fontSize: 12))),
+                      DataCell(Text(med['dosage'] ?? '', style: const TextStyle(fontSize: 12))),
+                      DataCell(Text(med['time'] ?? '', style: const TextStyle(fontSize: 12))),
+                      DataCell(med['time'] != 'Manual Entry' ? IconButton(
+                        icon: const Icon(LucideIcons.bell, size: 18, color: Color(0xFF0EA5E9)),
+                        onPressed: () => _saveMedicationFromOCR(med),
+                        tooltip: 'Set Alarm',
+                      ) : const SizedBox()),
+                    ]);
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0EA5E9)),
+            icon: const Icon(Icons.add, color: Colors.white, size: 18),
+            label: const Text('Add All to Meds', style: TextStyle(color: Colors.white)),
+            onPressed: () {
+              Navigator.pop(context);
+              for (var med in _scannedMeds) {
+                if (med['time'] != 'Manual Entry') _saveMedicationFromOCR(med);
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('${_scannedMeds.length} medicines added to schedule!'))
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _saveMedicationFromOCR(Map<String, String> med) async {
+    try {
+      await _supabase.from('medications').insert({
+        'user_id': _supabase.auth.currentUser!.id,
+        'name': med['name'],
+        'dosage': med['dosage'],
+        'time': med['time'],
+        'is_taken': false,
+      });
+      await HistoryService.logAction(actionType: 'MED', description: 'Added ${med["name"]} from prescription scan');
+    } catch (e) {
+      debugPrint('Save med error: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('Medical Vault', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text('Medical Vault', style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true, backgroundColor: Colors.white, elevation: 0,
       ),
       body: _isLoading 
@@ -167,19 +364,19 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
         : Stack(
             children: [
               _prescriptions.isEmpty ? _buildEmptyState() : _buildList(),
-              if (_isUploading)
+              if (_isUploading || _isScanningOCR)
                 Container(
                   color: Colors.black54,
-                  child: const Center(
+                  child: Center(
                     child: Card(
                       child: Padding(
-                        padding: EdgeInsets.all(20.0),
+                        padding: const EdgeInsets.all(20.0),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircularProgressIndicator(),
-                            SizedBox(height: 16),
-                            Text("Uploading securely..."),
+                            _isScanningOCR 
+                              ? const Column(children: [Icon(LucideIcons.scan, size: 40, color: Color(0xFF0EA5E9)), SizedBox(height: 16), Text("Scanning prescription..."), SizedBox(height: 8), Text("Extracting medicine details", style: TextStyle(fontSize: 12, color: Colors.grey))])
+                              : const Column(children: [CircularProgressIndicator(), SizedBox(height: 16), Text("Uploading securely...")]),
                           ],
                         ),
                       ),
@@ -207,6 +404,19 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
                     title: const Text('Choose from Gallery'),
                     onTap: () { Navigator.pop(context); _pickAndUploadImage(ImageSource.gallery); },
                   ),
+                  const Divider(),
+                  ListTile(
+                    leading: const Icon(LucideIcons.scan, color: Colors.orange),
+                    title: const Text('📸 Scan Prescription (OCR)'),
+                    subtitle: const Text('Extract medicines & set alarms automatically'),
+                    onTap: () { Navigator.pop(context); _scanPrescriptionOCR(ImageSource.camera); },
+                  ),
+                  ListTile(
+                    leading: const Icon(LucideIcons.scanLine, color: Colors.purple),
+                    title: const Text('📱 Scan from Gallery'),
+                    subtitle: const Text('Choose image to scan'),
+                    onTap: () { Navigator.pop(context); _scanPrescriptionOCR(ImageSource.gallery); },
+                  ),
                 ],
               ),
             ),
@@ -223,7 +433,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
        const Icon(LucideIcons.folderOpen, size: 80, color: Colors.grey),
        const SizedBox(height: 16),
-       Text('Vault is Empty', style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey)),
+       Text('Vault is Empty', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey)),
        const Text('Keep your medical records safe here.', style: TextStyle(color: Colors.grey)),
      ]));
   }

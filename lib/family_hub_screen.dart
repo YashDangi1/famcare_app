@@ -2,7 +2,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'history_service.dart';
 
 class FamilyHubScreen extends StatefulWidget {
@@ -147,7 +146,7 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('Family Hub', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text('Family Hub', style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true, backgroundColor: Colors.white, elevation: 0,
       ),
       body: _isLoading 
@@ -167,7 +166,7 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
           const SizedBox(height: 20),
           const Icon(LucideIcons.users, size: 100, color: Color(0xFF0EA5E9)),
           const SizedBox(height: 20),
-          Text('Your Family Health Hub', style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold)),
+          Text('Your Family Health Hub', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
           const Text('Collaborate on health tracking with your loved ones.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
           const SizedBox(height: 40),
           _buildActionCard(
@@ -195,7 +194,7 @@ Widget _buildPendingView() {
         children: [
           const Icon(LucideIcons.clock, size: 80, color: Colors.orange),
           const SizedBox(height: 24),
-          Text('Request Sent!', style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold)),
+          Text('Request Sent!', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           // Yahan hum dikha rahe hain ki request "kis" family ko bheji gayi hai
           Text(
@@ -242,7 +241,7 @@ Widget _buildPendingView() {
           ],
 
           const SizedBox(height: 30),
-          Text('Family Members', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+          Text('Family Members', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           ...approved.map((m) => _buildMemberTile(m, isRequest: false)),
         ],
@@ -334,7 +333,7 @@ Widget _buildPendingView() {
 
   void _showInputDialog(String title, String hint, TextEditingController controller, VoidCallback onConfirm) {
     showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+      title: Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
       content: TextField(controller: controller, decoration: InputDecoration(hintText: hint, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)))),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
