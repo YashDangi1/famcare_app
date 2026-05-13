@@ -310,7 +310,35 @@ class _MedsScreenState extends State<MedsScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _medications.isEmpty
-              ? const Center(child: Text("No medicines added yet.", style: TextStyle(color: Colors.grey)))
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        LucideIcons.pill,
+                        size: 100,
+                        color: Colors.grey[300],
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        "Your schedule is clear",
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        "Tap the + button to add your first medication.",
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ),
+                )
               : ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: _medications.length,
@@ -318,52 +346,101 @@ class _MedsScreenState extends State<MedsScreen> {
                     final med = _medications[index];
                     final isTaken = med['is_taken'] ?? false;
 
-                    return Card(
-                      elevation: 0,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        side: BorderSide(color: Colors.grey[100]!),
-                      ),
-                      color: isTaken ? Colors.green[50] : Colors.white,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: ListTile(
-                          // NAYA LOGIC YAHAN HAI JISE IMAGE DIKHEGI
-                          leading: med['image_path'] != null && med['image_path'].toString().isNotEmpty
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.file(
-                                    File(med['image_path']),
-                                    width: 50,
-                                    height: 50,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return CircleAvatar(
-                                        backgroundColor: const Color(0xFF0EA5E9).withOpacity(0.1),
-                                        child: const Icon(LucideIcons.pill, color: Color(0xFF0EA5E9)),
-                                      );
-                                    },
-                                  ),
-                                )
-                              : CircleAvatar(
-                                  backgroundColor: const Color(0xFF0EA5E9).withOpacity(0.1),
-                                  child: const Icon(LucideIcons.pill, color: Color(0xFF0EA5E9)),
+                    return Opacity(
+                      opacity: isTaken ? 0.7 : 1.0,
+                      child: Card(
+                        elevation: 4,
+                        shadowColor: Colors.black12,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          side: BorderSide(
+                            color: isTaken ? Colors.green.withOpacity(0.3) : Colors.grey[100]!,
+                            width: 1.5,
+                          ),
+                        ),
+                        color: isTaken ? Colors.green[50] : Colors.white,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Row(
+                            children: [
+                              // Left Side: Prominent Image
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(15),
+                                child: Container(
+                                  width: 70,
+                                  height: 70,
+                                  color: const Color(0xFF0EA5E9).withOpacity(0.1),
+                                  child: med['image_path'] != null && med['image_path'].toString().isNotEmpty
+                                      ? Image.file(
+                                          File(med['image_path']),
+                                          width: 70,
+                                          height: 70,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return const Icon(LucideIcons.pill, color: Color(0xFF0EA5E9), size: 30);
+                                          },
+                                        )
+                                      : const Icon(LucideIcons.pill, color: Color(0xFF0EA5E9), size: 30),
                                 ),
-                          title: Text(med['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text("${med['dosage'] ?? ''} • ${med['time'] ?? ''}"),
-                          trailing: IconButton(
-                            icon: Icon(
-                              isTaken ? LucideIcons.checkCircle2 : LucideIcons.circle,
-                              color: isTaken ? Colors.green : Colors.grey[300],
-                              size: 26,
-                            ),
-                            onPressed: () {
-                              final id = med['id']?.toString();
-                              if (id != null) {
-                                _toggleTaken(id, isTaken);
-                              }
-                            },
+                              ),
+                              const SizedBox(width: 16),
+                              // Middle: Details
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      med['name'] ?? '',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.grey[900],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      med['dosage'] ?? '',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    // Time Chip
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF0EA5E9).withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        med['time'] ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF0369A1),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // Right Side: Action
+                              IconButton(
+                                icon: Icon(
+                                  isTaken ? LucideIcons.checkCircle2 : LucideIcons.circle,
+                                  color: isTaken ? Colors.green : Colors.grey[300],
+                                  size: 32,
+                                ),
+                                onPressed: () {
+                                  final id = med['id']?.toString();
+                                  if (id != null) {
+                                    _toggleTaken(id, isTaken);
+                                  }
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       ),
