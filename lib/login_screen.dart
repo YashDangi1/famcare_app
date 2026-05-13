@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'profile_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -45,8 +46,12 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         // Sign Up Logic
         await Supabase.instance.client.auth.signUp(email: email, password: password);
-        scaffold.showSnackBar(const SnackBar(content: Text('Verification email sent! Please check your inbox.'), backgroundColor: Colors.green));
-        setState(() => _isSigningIn = true); // Switch back to login after signup
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const ProfileSetupScreen()),
+          );
+        }
       }
     } on AuthException catch (e) {
       scaffold.showSnackBar(SnackBar(content: Text('Auth Error: ${e.message}'), backgroundColor: Colors.red));

@@ -10,6 +10,7 @@ import 'vitals_screen.dart';
 import 'meds_screen.dart';
 import 'prescription_screen.dart';
 import 'history_service.dart';
+import 'settings_screen.dart';
 
 // ==========================================
 // 1. MAIN APP SHELL (Navigation + Alarm Logic)
@@ -244,10 +245,19 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('FamCare', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0EA5E9))),
+        title: const Text('FamCare', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0EA5E9))),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(LucideIcons.settings, color: Colors.grey),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const SettingsScreen()),
+            ),
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
