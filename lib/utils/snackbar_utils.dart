@@ -8,14 +8,15 @@ class AppSnackBar {
       SnackBar(
         content: Row(
           children: [
-            const Icon(LucideIcons.checkCircle, color: Colors.white),
+            const Icon(LucideIcons.checkCircle2, color: Colors.white),
             const SizedBox(width: 12),
-            Expanded(child: Text(message)),
+            Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
           ],
         ),
-        backgroundColor: Colors.green,
+        backgroundColor: Colors.green.shade600,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }
@@ -26,14 +27,15 @@ class AppSnackBar {
       SnackBar(
         content: Row(
           children: [
-            const Icon(LucideIcons.xCircle, color: Colors.white),
+            const Icon(LucideIcons.alertCircle, color: Colors.white),
             const SizedBox(width: 12),
-            Expanded(child: Text(message)),
+            Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
           ],
         ),
-        backgroundColor: Colors.red,
+        backgroundColor: Colors.red.shade500,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }
@@ -46,12 +48,13 @@ class AppSnackBar {
           children: [
             const Icon(LucideIcons.info, color: Colors.white),
             const SizedBox(width: 12),
-            Expanded(child: Text(message)),
+            Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))),
           ],
         ),
         backgroundColor: const Color(0xFF0EA5E9),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        margin: const EdgeInsets.all(16),
       ),
     );
   }

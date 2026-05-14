@@ -2,7 +2,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:flutter/services.dart';
+import 'activity_feed_screen.dart';
 import 'history_service.dart';
+import 'utils/snackbar_utils.dart';
 
 class FamilyHubScreen extends StatefulWidget {
   const FamilyHubScreen({super.key});
@@ -136,7 +139,7 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
   }
 
   void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    AppSnackBar.showError(context, msg);
   }
 
   // --- UI Layouts ---
@@ -232,6 +235,8 @@ Widget _buildPendingView() {
         padding: const EdgeInsets.all(20),
         children: [
           _buildFamilyHeader(),
+          const SizedBox(height: 16),
+          _buildActivityFeedButton(),
           
           if (isMeAdmin && pending.isNotEmpty) ...[
             const SizedBox(height: 30),
@@ -252,6 +257,7 @@ Widget _buildPendingView() {
   // --- Helper Widgets ---
 
   Widget _buildFamilyHeader() {
+    final handle = _familyGroup?['handle'] ?? '...';
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -263,19 +269,62 @@ Widget _buildPendingView() {
         children: [
           Text(_familyGroup?['name'] ?? 'Family', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(LucideIcons.copy, size: 14, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('CODE: ${_familyGroup?['handle']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1)),
-              ],
+          InkWell(
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: handle));
+              AppSnackBar.showSuccess(context, "Invite code copied!");
+            },
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(LucideIcons.copy, size: 14, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text('CODE: $handle', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                ],
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildActivityFeedButton() {
+    return InkWell(
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (ctx) => const ActivityFeedScreen())),
+      borderRadius: BorderRadius.circular(15),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFF0EA5E9).withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+              child: const Icon(LucideIcons.activity, color: Color(0xFF0EA5E9)),
+            ),
+            const SizedBox(width: 16),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Family Activity Feed', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  Text('See latest health updates from family', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+          ],
+        ),
       ),
     );
   }

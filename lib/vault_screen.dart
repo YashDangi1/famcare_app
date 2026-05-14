@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:image_picker/image_picker.dart';
+import 'utils/snackbar_utils.dart';
 
 class VaultScreen extends StatefulWidget {
   const VaultScreen({super.key});
@@ -130,9 +131,7 @@ class _VaultScreenState extends State<VaultScreen> {
               ),
               onPressed: () async {
                 if (titleController.text.isEmpty || pickedImage == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Please provide title and image')),
-                  );
+                  AppSnackBar.showError(context, 'Please provide title and image');
                   return;
                 }
 
@@ -170,16 +169,12 @@ class _VaultScreenState extends State<VaultScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Document saved to vault!'), backgroundColor: Colors.green),
-        );
+        AppSnackBar.showSuccess(context, 'Document saved to vault!');
         _fetchPrescriptions();
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $e'), backgroundColor: Colors.red),
-        );
+        AppSnackBar.showError(context, 'Upload failed: $e');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

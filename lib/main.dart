@@ -42,10 +42,11 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        primaryColor: primaryBlue,
+        primaryColor: const Color(0xFF0EA5E9),
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: primaryBlue,
-          primary: primaryBlue,
+          seedColor: const Color(0xFF0EA5E9),
+          primary: const Color(0xFF0EA5E9),
         ),
         fontFamily: 'Roboto',
         appBarTheme: const AppBarTheme(
@@ -53,40 +54,40 @@ class MyApp extends StatelessWidget {
           elevation: 0,
           centerTitle: true,
           titleTextStyle: TextStyle(
-            color: Colors.black,
+            color: Color(0xFF1E293B),
             fontSize: 20,
             fontWeight: FontWeight.bold,
           ),
-          iconTheme: IconThemeData(color: Colors.black),
+          iconTheme: IconThemeData(color: Color(0xFF1E293B)),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: Colors.grey[50],
+          fillColor: Colors.white,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(15),
+            borderSide: BorderSide(color: Colors.grey[200]!),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(15),
             borderSide: BorderSide(color: Colors.grey[200]!),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: primaryBlue, width: 2),
+            borderRadius: BorderRadius.circular(15),
+            borderSide: const BorderSide(color: Color(0xFF0EA5E9), width: 2),
           ),
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         ),
         cardTheme: CardThemeData(
           elevation: 0,
+          color: Colors.white,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Colors.grey[100]!),
+            borderRadius: BorderRadius.circular(15),
           ),
           clipBehavior: Clip.antiAlias,
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: primaryBlue,
+            backgroundColor: const Color(0xFF0EA5E9),
             foregroundColor: Colors.white,
             minimumSize: const Size(double.infinity, 50),
             shape: RoundedRectangleBorder(

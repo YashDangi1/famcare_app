@@ -133,9 +133,7 @@ class _MedsScreenState extends State<MedsScreen> {
                         } catch (e) {
                           debugPrint("Image picking error: $e");
                           if (mounted && context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text("Error picking image: $e"))
-                            );
+                            AppSnackBar.showError(context, "Error picking image: $e");
                           }
                         }
                       },

@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'main_app_shell.dart';
+import 'utils/snackbar_utils.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
   const ProfileSetupScreen({super.key});
@@ -57,9 +58,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
 
   Future<void> _completeSetup() async {
     if (_fullNameController.text.isEmpty || _ageController.text.isEmpty || _selectedBloodGroup == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill all fields')),
-      );
+      AppSnackBar.showError(context, 'Please fill all fields');
       return;
     }
 
@@ -86,9 +85,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        AppSnackBar.showError(context, 'Error: $e');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

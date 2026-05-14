@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'profile_setup_screen.dart';
+import 'main_app_shell.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -28,29 +29,48 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // --- Auth Logic (Email Standard) ---
+  // --- Auth Logic ---
   Future<void> _submit() async {
-    // Form validate karo (jaisa normal apps mein hota hai)
+    // Validate form
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
     final scaffold = ScaffoldMessenger.of(context);
+    final supabase = Supabase.instance.client;
 
     try {
       if (_isSigningIn) {
         // Login Logic
-        await Supabase.instance.client.auth.signInWithPassword(email: email, password: password);
-        // `main.dart` ka AuthCheck automatically dashboard par bhej dega success hone par
+        await supabase.auth.signInWithPassword(email: email, password: password);
+        // AuthCheck in main.dart will handle navigation on success
       } else {
         // Sign Up Logic
-        await Supabase.instance.client.auth.signUp(email: email, password: password);
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const ProfileSetupScreen()),
-          );
+        final response = await supabase.auth.signUp(email: email, password: password);
+        final user = response.user;
+
+        if (user != null && mounted) {
+          // Check if profile is complete (avatar_url is not null)
+          final profileData = await supabase
+              .from('profiles')
+              .select('avatar_url')
+              .eq('id', user.id)
+              .maybeSingle();
+
+          if (mounted) {
+            if (profileData == null || profileData['avatar_url'] == null) {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const ProfileSetupScreen()),
+              );
+            } else {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const MainAppShell()),
+              );
+            }
+          }
         }
       }
     } on AuthException catch (e) {

@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'utils/snackbar_utils.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -93,9 +94,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'avatar_url': _avatarImage?.path,
         'updated_at': DateTime.now().toIso8601String(),
       });
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile Updated!')));
+      if (mounted) AppSnackBar.showSuccess(context, 'Profile Updated!');
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+      if (mounted) AppSnackBar.showError(context, 'Error: $e');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

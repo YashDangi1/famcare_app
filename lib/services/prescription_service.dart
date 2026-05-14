@@ -4,12 +4,10 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../models/medicine_model.dart';
 
 class PrescriptionService {
-  // Fetch Gemini API Key from .env
-  final String? apiKey = dotenv.env['GEMINI_KEY'];
-
   Future<List<Medicine>> parseWithAI(String text) async {
-    if (apiKey == null || apiKey!.isEmpty) {
-      throw Exception("Gemini API key not configured in .env file");
+    final String? apiKey = dotenv.env['GEMINI_KEY'];
+    if (apiKey == null || apiKey.isEmpty) {
+      throw Exception("Gemini key not configured in .env file");
     }
 
     if (text.trim().isEmpty) throw Exception("Empty OCR text");

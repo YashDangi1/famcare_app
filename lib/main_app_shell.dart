@@ -6,9 +6,9 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:audioplayers/audioplayers.dart';
 
 import 'family_hub_screen.dart';
-import 'vitals_screen.dart';
+import 'screens/vitals_screen.dart';
 import 'meds_screen.dart';
-import 'prescription_screen.dart';
+import 'screens/prescription_screen.dart';
 import 'vault_screen.dart';
 import 'history_service.dart';
 import 'settings_screen.dart';
@@ -33,6 +33,8 @@ class _MainAppShellState extends State<MainAppShell> {
   final Set<String> _triggeredToday = {};
   String _lastResetDate = '';
   final Map<String, Future<void>> _pendingReminders = {}; 
+  int _pendingMedsCount = 0;
+  StreamSubscription? _medsSubscription;
 
   @override
   void initState() {
@@ -49,11 +51,48 @@ class _MainAppShellState extends State<MainAppShell> {
 
     // 🔥 Global Alarm Checker (Every 5 seconds)
     _alarmCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) => _checkAlarms());
+
+    // Listen for medication changes to update badge
+    _setupMedsSubscription();
+    _updatePendingMedsCount();
+  }
+
+  void _setupMedsSubscription() {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    _medsSubscription = _supabase
+        .from('medications')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .listen((_) => _updatePendingMedsCount());
+  }
+
+  Future<void> _updatePendingMedsCount() async {
+    try {
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      final response = await _supabase
+          .from('medications')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('is_taken', false);
+      
+      if (mounted) {
+        setState(() {
+          _pendingMedsCount = (response as List).length;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error updating pending meds count: $e");
+    }
   }
 
   @override
   void dispose() {
     _alarmCheckTimer?.cancel();
+    _medsSubscription?.cancel();
     _audioPlayer.dispose();
     super.dispose();
   }
@@ -204,12 +243,19 @@ class _MainAppShellState extends State<MainAppShell> {
         unselectedItemColor: Colors.grey,
         type: BottomNavigationBarType.fixed,
         onTap: (index) => setState(() => _currentIndex = index),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(LucideIcons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(LucideIcons.pill), label: 'Meds'),
-          BottomNavigationBarItem(icon: Icon(LucideIcons.activity), label: 'Vitals'),
-          BottomNavigationBarItem(icon: Icon(LucideIcons.folderHeart), label: 'Vault'),
-          BottomNavigationBarItem(icon: Icon(LucideIcons.users), label: 'Family'),
+        items: [
+          const BottomNavigationBarItem(icon: Icon(LucideIcons.home), label: 'Home'),
+          BottomNavigationBarItem(
+            icon: Badge(
+              label: Text(_pendingMedsCount.toString()),
+              isLabelVisible: _pendingMedsCount > 0,
+              child: const Icon(LucideIcons.pill),
+            ),
+            label: 'Meds',
+          ),
+          const BottomNavigationBarItem(icon: Icon(LucideIcons.activity), label: 'Vitals'),
+          const BottomNavigationBarItem(icon: Icon(LucideIcons.folderHeart), label: 'Vault'),
+          const BottomNavigationBarItem(icon: Icon(LucideIcons.users), label: 'Family'),
         ],
       ),
     );
@@ -233,6 +279,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   List<dynamic> _upcomingMeds = [];
   Map<String, dynamic>? _latestVital;
+
+  // New state variables for Quick Stats
+  int _totalMedsToday = 0;
+  int _takenMedsToday = 0;
+  int _familyCount = 0;
+  int _streakDays = 0;
 
   @override
   void initState() {
@@ -263,10 +315,34 @@ class _HomeScreenState extends State<HomeScreen> {
             .limit(1)
             .maybeSingle();
 
+        // Task 2: Fetch Quick Stats
+        final allMedsToday = await _supabase.from('medications')
+            .select('is_taken')
+            .eq('user_id', user.id);
+        
+        // Fetch Family Members (if there's a family_groups table or similar)
+        // For now, let's check if the user is in a group
+        final familyData = await _supabase.from('family_members')
+            .select('group_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+        
+        int familyMembers = 0;
+        if (familyData != null) {
+          final members = await _supabase.from('family_members')
+              .select('id')
+              .eq('group_id', familyData['group_id']);
+          familyMembers = (members as List).length;
+        }
+
         if (mounted) {
           setState(() {
             _upcomingMeds = medsData;
             _latestVital = vitalsData;
+            _totalMedsToday = (allMedsToday as List).length;
+            _takenMedsToday = (allMedsToday).where((m) => m['is_taken'] == true).length;
+            _familyCount = familyMembers;
+            _streakDays = 5; // Placeholder for now
             _isLoading = false;
           });
         }
@@ -274,6 +350,13 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  String _getGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return "Good Morning";
+    if (hour < 17) return "Good Afternoon";
+    return "Good Evening";
   }
 
   @override
@@ -312,10 +395,32 @@ class _HomeScreenState extends State<HomeScreen> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Welcome back,', style: TextStyle(fontSize: 16, color: Colors.grey[600], letterSpacing: 0.5)),
+                        Text('${_getGreeting()},', style: TextStyle(fontSize: 16, color: Colors.grey[600], letterSpacing: 0.5)),
                         Text('$displayName!', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
                       ],
                     ),
+                    const SizedBox(height: 20),
+
+                    // Quick Stats Chips
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildStatChip('Meds Today', '$_takenMedsToday/$_totalMedsToday', LucideIcons.pill, Colors.orange),
+                          const SizedBox(width: 12),
+                          _buildStatChip('Streak', '$_streakDays Days', LucideIcons.flame, Colors.red),
+                          const SizedBox(width: 12),
+                          _buildStatChip('Family', '$_familyCount Members', LucideIcons.users, Colors.green),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 25),
+
+                    // Today's Progress Card
+                    const Text('Today\'s Progress', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                    const SizedBox(height: 12),
+                    _buildProgressCard(),
+
                     const SizedBox(height: 25),
                     
                     // Upcoming Medication Card
@@ -351,6 +456,74 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildStatChip(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey[100]!),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+              Text(label, style: TextStyle(fontSize: 10, color: Colors.grey[500])),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressCard() {
+    final double progress = _totalMedsToday == 0 ? 1.0 : _takenMedsToday / _totalMedsToday;
+    final int percentage = (progress * 100).toInt();
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey[100]!),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Adherence', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.grey[600])),
+              Text('$percentage%', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0EA5E9))),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: progress,
+              backgroundColor: const Color(0xFF0EA5E9).withOpacity(0.1),
+              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0EA5E9)),
+              minHeight: 10,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _totalMedsToday == 0 
+              ? 'No medications scheduled for today.' 
+              : 'You have taken $_takenMedsToday out of $_totalMedsToday medications.',
+            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMedicationSummary() {
     if (_upcomingMeds.isEmpty) {
       return Container(
@@ -364,7 +537,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.1), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), shape: BoxShape.circle),
               child: const Icon(LucideIcons.check, color: Colors.green, size: 24),
             ),
             const SizedBox(width: 16),
@@ -391,14 +564,14 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
           border: Border.all(color: Colors.grey[100]!),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), shape: BoxShape.circle),
               child: const Icon(LucideIcons.pill, color: Colors.orange, size: 24),
             ),
             const SizedBox(width: 16),
@@ -448,6 +621,32 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    String mainLabel = 'Vitals Reading';
+    String mainValue = '--';
+    IconData mainIcon = LucideIcons.activity;
+    Color iconColor = const Color(0xFF0EA5E9);
+
+    if (_latestVital!['bp_systolic'] != null) {
+      mainLabel = 'Blood Pressure';
+      mainValue = '${_latestVital!['bp_systolic']}/${_latestVital!['bp_diastolic']} mmHg';
+      mainIcon = LucideIcons.activity;
+    } else if (_latestVital!['heart_rate'] != null) {
+      mainLabel = 'Heart Rate';
+      mainValue = '${_latestVital!['heart_rate']} bpm';
+      mainIcon = LucideIcons.heart;
+      iconColor = Colors.red;
+    } else if (_latestVital!['spo2'] != null) {
+      mainLabel = 'SpO2';
+      mainValue = '${_latestVital!['spo2']}%';
+      mainIcon = LucideIcons.droplets;
+      iconColor = Colors.blue;
+    } else if (_latestVital!['weight'] != null) {
+      mainLabel = 'Weight';
+      mainValue = '${_latestVital!['weight']} kg';
+      mainIcon = LucideIcons.scale;
+      iconColor = Colors.green;
+    }
+
     return InkWell(
       onTap: () => widget.onTabChange(2),
       borderRadius: BorderRadius.circular(20),
@@ -456,24 +655,24 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
           border: Border.all(color: Colors.grey[100]!),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: const Color(0xFF0EA5E9).withValues(alpha: 0.1), shape: BoxShape.circle),
-              child: const Icon(LucideIcons.activity, color: Color(0xFF0EA5E9), size: 24),
+              decoration: BoxDecoration(color: iconColor.withOpacity(0.1), shape: BoxShape.circle),
+              child: Icon(mainIcon, color: iconColor, size: 24),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_latestVital!['vital_type'] ?? 'Vital', style: const TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w500)),
+                  Text(mainLabel, style: const TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w500)),
                   const SizedBox(height: 2),
-                  Text('${_latestVital!['value']} ${_latestVital!['unit']}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                  Text(mainValue, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
                 ],
               ),
             ),
@@ -493,7 +692,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
+              color: color.withOpacity(0.1),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Icon(icon, color: color, size: 26),
