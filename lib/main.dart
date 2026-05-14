@@ -3,7 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 // ⚠️ IN IMPORTS KO DHAYAN SE DEKHO
 import 'login_screen.dart';
-import 'main_app_shell.dart'; // Humne abhi ye nayi file banayi hai
+import 'main_app_shell.dart';
+import 'splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -37,7 +38,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0EA5E9)),
         fontFamily: 'Roboto',
       ),
-      home: const AuthCheck(),
+      home: const SplashScreen(),
     );
   }
 }
