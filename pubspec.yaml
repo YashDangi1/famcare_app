@@ -27,6 +27,7 @@ dependencies:
   # 🤖 AI & OCR (NEW)
   google_mlkit_text_recognition: ^0.13.0
   http: ^1.2.2
+  intl: ^0.19.0
 
   # 🎨 UI & FONTS
   google_fonts: ^6.3.3
