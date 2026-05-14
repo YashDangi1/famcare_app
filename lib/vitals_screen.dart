@@ -265,7 +265,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
                                 Container(
                                   padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
-                                    color: _getColor(type).withOpacity(0.1),
+                                    color: _getColor(type).withValues(alpha: 0.1),
                                     shape: BoxShape.circle,
                                   ),
                                   child: Icon(_getIcon(type), color: _getColor(type), size: 24),

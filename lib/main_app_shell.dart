@@ -211,6 +211,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _fullName;
   bool _isLoading = true;
   List<dynamic> _upcomingMeds = [];
+  Map<String, dynamic>? _latestVital;
 
   @override
   void initState() {
@@ -222,13 +223,29 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final user = _supabase.auth.currentUser;
       if (user != null) {
-        final data = await _supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
-        if (data != null && mounted) setState(() => _fullName = data['full_name']);
+        // Fetch Profile Name
+        final profileData = await _supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
+        if (profileData != null && mounted) setState(() => _fullName = profileData['full_name']);
         
-        final medsData = await _supabase.from('medications').select('*').eq('user_id', user.id).eq('is_taken', false);
+        // Fetch Upcoming Meds (is_taken false, ordered by time)
+        final medsData = await _supabase.from('medications')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('is_taken', false)
+            .order('time', ascending: true);
+        
+        // Fetch Latest Vital
+        final vitalsData = await _supabase.from('vitals')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('measured_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
         if (mounted) {
           setState(() {
             _upcomingMeds = medsData;
+            _latestVital = vitalsData;
             _isLoading = false;
           });
         }
@@ -244,7 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final displayName = _fullName ?? user?.email?.split('@')[0] ?? "User";
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         title: const Text('FamCare', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0EA5E9))),
         backgroundColor: Colors.white,
@@ -270,34 +287,40 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Good Morning,', style: TextStyle(fontSize: 16, color: Colors.grey[600])),
-                    Text(displayName.toUpperCase(), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                    // Welcome Header
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Welcome back,', style: TextStyle(fontSize: 16, color: Colors.grey[600], letterSpacing: 0.5)),
+                        Text('$displayName!', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                      ],
+                    ),
                     const SizedBox(height: 25),
                     
-                    _buildSummaryCard(
-                      context, 
-                      _upcomingMeds.isNotEmpty ? 'Due Soon' : 'No Immediate Meds',
-                      _upcomingMeds.isNotEmpty ? 'Next: ${_upcomingMeds[0]['name']}' : 'Check full schedule',
-                      LucideIcons.pill, 
-                      _upcomingMeds.isNotEmpty ? Colors.orange : Colors.grey,
-                      () => widget.onTabChange(1)
-                    ),
-                    const SizedBox(height: 15),
-                    _buildSummaryCard(context, 'Health Tracker', 'Log your vitals', LucideIcons.activity, const Color(0xFF0EA5E9), () => widget.onTabChange(2)),
-                    const SizedBox(height: 15),
-                    _buildSummaryCard(context, 'Family Hub', 'See what others are doing', LucideIcons.users, Colors.green, () => widget.onTabChange(4)),
+                    // Upcoming Medication Card
+                    const Text('Next Medication', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                    const SizedBox(height: 12),
+                    _buildMedicationSummary(),
+
+                    const SizedBox(height: 25),
+                    
+                    // Latest Vital Card
+                    const Text('Latest Reading', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                    const SizedBox(height: 12),
+                    _buildVitalsSummary(),
 
                     const SizedBox(height: 30),
-                    const Text('Quick Actions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 15),
+                    
+                    // Quick Actions Section
+                    const Text('Quick Actions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
+                    const SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildActionButton(context, 'Add Med', LucideIcons.plusCircle, Colors.orange, () => widget.onTabChange(1)),
-                        _buildActionButton(context, 'Vault', LucideIcons.folderLock, Colors.purple, () => widget.onTabChange(3)),
-                        _buildActionButton(context, 'SOS', LucideIcons.phoneCall, Colors.red, () {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Emergency SOS Triggered!")));
-                        }),
+                        _buildQuickAction(context, 'Log Vital', LucideIcons.activity, const Color(0xFF0EA5E9), () => widget.onTabChange(2)),
+                        _buildQuickAction(context, 'Add Med', LucideIcons.pill, Colors.orange, () => widget.onTabChange(1)),
+                        _buildQuickAction(context, 'Upload Rx', LucideIcons.filePlus, Colors.purple, () => widget.onTabChange(3)),
+                        _buildQuickAction(context, 'Family', LucideIcons.users, Colors.green, () => widget.onTabChange(4)),
                       ],
                     ),
                   ],
@@ -307,18 +330,77 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildSummaryCard(BuildContext context, String title, String sub, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildMedicationSummary() {
+    if (_upcomingMeds.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey[100]!),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.1), shape: BoxShape.circle),
+              child: const Icon(LucideIcons.check, color: Colors.green, size: 24),
+            ),
+            const SizedBox(width: 16),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('All caught up for today!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                  Text('Check again later', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final nextMed = _upcomingMeds[0];
     return InkWell(
-      onTap: onTap,
+      onTap: () => widget.onTabChange(1),
       borderRadius: BorderRadius.circular(20),
       child: Container(
         padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey[100]!)),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          border: Border.all(color: Colors.grey[100]!),
+        ),
         child: Row(
           children: [
-            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle), child: Icon(icon, color: color, size: 24)),
-            const SizedBox(width: 20),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontSize: 12, color: Colors.grey)), Text(sub, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))])),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), shape: BoxShape.circle),
+              child: const Icon(LucideIcons.pill, color: Colors.orange, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(nextMed['name'] ?? 'Unknown', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(LucideIcons.clock, size: 14, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text(nextMed['time'] ?? '--:--', style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)),
+                      const SizedBox(width: 12),
+                      const Icon(LucideIcons.scale, size: 14, color: Colors.grey),
+                      const SizedBox(width: 4),
+                      Text(nextMed['dosage'] ?? '-', style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
             const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
           ],
         ),
@@ -326,16 +408,78 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildActionButton(BuildContext context, String label, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildVitalsSummary() {
+    if (_latestVital == null) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey[100]!),
+        ),
+        child: const Row(
+          children: [
+            Icon(LucideIcons.activity, color: Colors.grey, size: 24),
+            SizedBox(width: 16),
+            Text('No vitals logged yet', style: TextStyle(color: Colors.grey, fontSize: 15)),
+          ],
+        ),
+      );
+    }
+
+    return InkWell(
+      onTap: () => widget.onTabChange(2),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          border: Border.all(color: Colors.grey[100]!),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: const Color(0xFF0EA5E9).withValues(alpha: 0.1), shape: BoxShape.circle),
+              child: const Icon(LucideIcons.activity, color: Color(0xFF0EA5E9), size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_latestVital!['vital_type'] ?? 'Vital', style: const TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 2),
+                  Text('${_latestVital!['value']} ${_latestVital!['unit']}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickAction(BuildContext context, String label, IconData icon, Color color, VoidCallback onTap) {
     return Column(
       children: [
         InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(15),
-          child: Container(padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(15)), child: Icon(icon, color: color, size: 28)),
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Icon(icon, color: color, size: 26),
+          ),
         ),
         const SizedBox(height: 8),
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF475569))),
       ],
     );
   }
