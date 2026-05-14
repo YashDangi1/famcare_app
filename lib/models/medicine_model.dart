@@ -25,7 +25,7 @@ class Medicine {
 
   factory Medicine.fromJson(Map<String, dynamic> json) {
     return Medicine(
-      name: json["medicine"] ?? "",
+      name: json["name"] ?? "",
       dose: json["dose"] ?? "",
       morning: json["morning"] ?? 0,
       afternoon: json["afternoon"] ?? 0,
@@ -37,7 +37,7 @@ class Medicine {
 
   Map<String, dynamic> toJson() {
     return {
-      "medicine": name,
+      "name": name,
       "dose": dose,
       "morning": morning,
       "afternoon": afternoon,

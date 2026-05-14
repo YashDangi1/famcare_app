@@ -2,12 +2,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-// Services aur Models ke imports
+// Services and Models imports
 import '../models/medicine_model.dart';
 import '../services/ocr_service.dart';
 import '../services/prescription_service.dart';
 import '../services/alarm_service.dart';
 import '../services/database_service.dart';
+import '../utils/snackbar_utils.dart';
 
 class PrescriptionScreen extends StatefulWidget {
   const PrescriptionScreen({super.key});
@@ -30,11 +31,10 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
   @override
   void initState() {
     super.initState();
-    alarmService.init(); //
   }
 
   // ==========================================
-  // ➕ MANUAL ADD MEDICINE (The Feature You Asked For)
+  // MANUAL ADD MEDICINE
   // ==========================================
   void _showAddManualDialog() {
     TextEditingController nameController = TextEditingController();
@@ -75,7 +75,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
             ElevatedButton(
               onPressed: () async {
                 if (nameController.text.isEmpty || selectedTime == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enter name and time")));
+                  AppSnackBar.showError(context, "Please enter name and time");
                   return;
                 }
 
@@ -104,7 +104,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
                 dbService.insertMedicines([newMed.toJson()]).catchError((e) => debugPrint("DB Error: $e"));
 
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Medicine & Alarm added successfully!")));
+                AppSnackBar.showSuccess(context, "Medicine & Alarm added successfully!");
               },
               child: const Text("Add"),
             ),
@@ -127,17 +127,17 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
     });
 
     try {
-      final text = await ocrService.extractText(image!); //
-      final parsed = await service.parseWithAI(text); //
+      final text = await ocrService.extractText(image!);
+      final parsed = await service.parseWithAI(text);
       setState(() { medicines = parsed; loading = false; });
 
       dbService.insertMedicines(medicines.map((m) => m.toJson()).toList())
-          .catchError((e) => debugPrint("Background DB Error: $e")); //
+          .catchError((e) => debugPrint("Background DB Error: $e"));
 
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Scan Complete! Please review and set alarms.")));
+      AppSnackBar.showSuccess(context, "Scan Complete! Please review and set alarms.");
     } catch (e) {
       setState(() => loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.redAccent));
+      AppSnackBar.showError(context, "Error: $e");
     }
   }
 

@@ -60,10 +60,28 @@ class _MainAppShellState extends State<MainAppShell> {
 
   // --- Alarm Logic ---
   Future<void> _checkAlarms() async {
-    // Reset triggered alarms at midnight
+    // Reset triggered alarms and reset is_taken flag at midnight
     final today = DateTime.now().toIso8601String().split('T')[0];
-    if (_lastResetDate != today) {
-      _triggeredToday.clear();
+    if (_lastResetDate.isNotEmpty && _lastResetDate != today) {
+      final user = _supabase.auth.currentUser;
+      if (user != null) {
+        // Daily Reset: Set is_taken = false for ALL medications of the current user
+        try {
+          await _supabase
+              .from('medications')
+              .update({'is_taken': false})
+              .eq('user_id', user.id)
+              .eq('is_taken', true);
+          
+          _triggeredToday.clear();
+          _lastResetDate = today;
+          debugPrint("Daily Reset: All medications marked as not taken for today.");
+          if (mounted) setState(() {});
+        } catch (e) {
+          debugPrint("Daily Reset Error: $e");
+        }
+      }
+    } else if (_lastResetDate.isEmpty) {
       _lastResetDate = today;
     }
 
@@ -126,7 +144,12 @@ class _MainAppShellState extends State<MainAppShell> {
   void _triggerInAppAlarm(Map<String, dynamic> med) async {
     if (!mounted) return;
     
+    final medId = med['id']?.toString() ?? '';
+    final now = DateTime.now();
+    final triggerKey = "${medId}_${now.hour}_${now.minute}";
+
     // 1. Show UI overlay immediately
+    if (!context.mounted) return;
     showGeneralDialog(
       context: context,
       barrierDismissible: false,
@@ -134,15 +157,13 @@ class _MainAppShellState extends State<MainAppShell> {
         medicine: med, 
         player: _audioPlayer,
         onActionTaken: () => setState(() {}),
-        pendingReminders: _pendingReminders,
-        onRemindLater: (medId) {
-          final reminderKey = '${medId}_${DateTime.now().millisecondsSinceEpoch}';
-          _pendingReminders[reminderKey] = Future.delayed(
+        onRemindLater: () {
+          // Trigger Bug Fix: Remove from triggered set BEFORE scheduling delay
+          _triggeredToday.remove(triggerKey);
+          
+          Future.delayed(
             const Duration(minutes: 15),
-            () {
-              _pendingReminders.remove(reminderKey);
-              _triggerInAppAlarm(med);
-            },
+            () => _triggerInAppAlarm(med),
           );
         },
       ),
@@ -492,15 +513,13 @@ class AlarmOverlay extends StatelessWidget {
   final Map<String, dynamic> medicine;
   final AudioPlayer player;
   final VoidCallback onActionTaken;
-  final Map<String, Future<void>> pendingReminders;
-  final Function(String) onRemindLater;
+  final VoidCallback onRemindLater;
 
   const AlarmOverlay({
     super.key, 
     required this.medicine, 
     required this.player, 
     required this.onActionTaken,
-    required this.pendingReminders,
     required this.onRemindLater,
   });
 
@@ -605,7 +624,7 @@ class AlarmOverlay extends StatelessWidget {
                       onPressed: () async {
                         await player.stop();
                         if (context.mounted) Navigator.pop(context);
-                        onRemindLater(medId);
+                        onRemindLater();
                       },
                       child: const Row(
                         mainAxisAlignment: MainAxisAlignment.center,

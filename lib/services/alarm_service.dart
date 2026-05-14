@@ -3,6 +3,11 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 class AlarmService {
+  // Singleton pattern
+  static final AlarmService instance = AlarmService._internal();
+  factory AlarmService() => instance;
+  AlarmService._internal();
+
   final FlutterLocalNotificationsPlugin notificationsPlugin = FlutterLocalNotificationsPlugin();
 
   Future<void> init() async {
@@ -35,5 +40,9 @@ class AlarmService {
       uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
     );
+  }
+
+  Future<void> cancelAlarm(int id) async {
+    await notificationsPlugin.cancel(id);
   }
 }

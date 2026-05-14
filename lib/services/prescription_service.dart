@@ -4,10 +4,14 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../models/medicine_model.dart';
 
 class PrescriptionService {
-  // Gemini API Key .env se uthayega
-  final String apiKey = dotenv.env['GEMINI_API_KEY'] ?? "AIzaSyDwNqg-q01IHMS2OsVlsjzoHJU8kzHytNU";
+  // Fetch Gemini API Key from .env
+  final String? apiKey = dotenv.env['GEMINI_KEY'];
 
   Future<List<Medicine>> parseWithAI(String text) async {
+    if (apiKey == null || apiKey!.isEmpty) {
+      throw Exception("Gemini API key not configured in .env file");
+    }
+
     if (text.trim().isEmpty) throw Exception("Empty OCR text");
 
     final url = Uri.parse(
@@ -23,7 +27,7 @@ class PrescriptionService {
             {
               "parts": [
                 {
-                  "text": "Extract medicine information from this text. Return ONLY a JSON array with these keys: 'medicine', 'dose', 'morning' (0 or 1), 'afternoon' (0 or 1), 'night' (0 or 1), 'instructions'. Text: $text"
+                  "text": "Extract medicine information from this text. Return ONLY a JSON array with these keys: 'name', 'dose', 'morning' (0 or 1), 'afternoon' (0 or 1), 'night' (0 or 1), 'instructions'. Text: $text"
                 }
               ]
             }
@@ -43,7 +47,7 @@ class PrescriptionService {
         throw Exception("AI Parsing failed");
       }
     } catch (e) {
-      // Fallback: Agar AI fail ho jaye toh manual entry handle karega
+      // Fallback: Handle manual entry if AI parsing fails
       return [Medicine(name: "Manual Entry Required", dose: "-", morning: 0, afternoon: 0, night: 0, instructions: "Could not parse automatically")];
     }
   }
