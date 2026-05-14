@@ -217,13 +217,45 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
             leading: const Icon(Icons.medication, color: Color(0xFF0EA5E9)),
             title: Text(med.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             subtitle: Text("Dose: ${med.dose}"),
-            trailing: IconButton(
-              icon: Icon(Icons.notifications_active, color: med.morningTime != null ? Colors.green : Colors.grey[300]),
-              onPressed: () {}, // Detail view or edit can go here
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.notifications_active, color: med.morningTime != null ? Colors.green : Colors.grey[300]),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  onPressed: () => _confirmDelete(i),
+                ),
+              ],
             ),
           ),
         );
       },
+    );
+  }
+
+  void _confirmDelete(int index) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Delete Prescription?", style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text("Are you sure you want to delete this prescription? This action cannot be undone."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                medicines.removeAt(index);
+              });
+              Navigator.pop(context);
+              AppSnackBar.showSuccess(context, "Prescription deleted!");
+            },
+            child: const Text("Delete", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
     );
   }
 }
