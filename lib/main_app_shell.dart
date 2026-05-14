@@ -9,6 +9,7 @@ import 'family_hub_screen.dart';
 import 'vitals_screen.dart';
 import 'meds_screen.dart';
 import 'prescription_screen.dart';
+import 'vault_screen.dart';
 import 'history_service.dart';
 import 'settings_screen.dart';
 
@@ -42,7 +43,7 @@ class _MainAppShellState extends State<MainAppShell> {
       HomeScreen(onTabChange: (index) => setState(() => _currentIndex = index)), // Tab 0
       const MedsScreen(),           // Tab 1
       const VitalsScreen(),         // Tab 2
-      const PrescriptionScreen(),   // Tab 3
+      const VaultScreen(),          // Tab 3
       const FamilyHubScreen(),      // Tab 4
     ];
 
@@ -186,7 +187,7 @@ class _MainAppShellState extends State<MainAppShell> {
           BottomNavigationBarItem(icon: Icon(LucideIcons.home), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(LucideIcons.pill), label: 'Meds'),
           BottomNavigationBarItem(icon: Icon(LucideIcons.activity), label: 'Vitals'),
-          BottomNavigationBarItem(icon: Icon(LucideIcons.folderLock), label: 'Vault'),
+          BottomNavigationBarItem(icon: Icon(LucideIcons.folderHeart), label: 'Vault'),
           BottomNavigationBarItem(icon: Icon(LucideIcons.users), label: 'Family'),
         ],
       ),
