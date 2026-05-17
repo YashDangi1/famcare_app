@@ -210,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _initDashboard();
     _setupMedsSubscription();
-    _minuteTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+    _minuteTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) {
         _initDashboard();
       }
@@ -284,6 +284,52 @@ class _HomeScreenState extends State<HomeScreen> {
       (a, b) => (a['dateTime'] as DateTime).compareTo(b['dateTime'] as DateTime),
     );
     return upcoming;
+  }
+
+  List<Map<String, dynamic>> _getDueSoonMeds() {
+    List<Map<String, dynamic>> dueSoon = [];
+    final now = DateTime.now();
+
+    for (var med in _todaysMeds) {
+      final times = [med.time1, med.time2, med.time3];
+      for (int index = 0; index < times.length; index++) {
+        final timeStr = times[index];
+        final slot = index + 1;
+        if (timeStr != null && timeStr.isNotEmpty) {
+          try {
+            final parsedTime = DateFormat('hh:mm a').parse(timeStr.trim());
+            final scheduledDateTime = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parsedTime.hour,
+              parsedTime.minute,
+            );
+
+            final difference = scheduledDateTime.difference(now).inMinutes;
+            final slotKey = _slotKey(med.id ?? '', slot);
+
+            if (difference >= -30 &&
+                difference <= 30 &&
+                !_takenSlotIdsToday.contains(slotKey) &&
+                !_skippedSlotIds.contains(slotKey)) {
+              dueSoon.add({
+                'medicine': med,
+                'slot': slot,
+                'time': timeStr,
+                'dateTime': scheduledDateTime,
+              });
+            }
+          } catch (e) {
+            debugPrint('Time parse error: $e');
+          }
+        }
+      }
+    }
+    dueSoon.sort(
+      (a, b) => (a['dateTime'] as DateTime).compareTo(b['dateTime'] as DateTime),
+    );
+    return dueSoon;
   }
 
   Future<void> _onEarlyTake(Map<String, dynamic> med) async {
@@ -698,7 +744,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Builder(
                       builder: (context) {
-                        final upcoming = _getUpcomingMedsInWindow();
+                        final dueSoonKeys = _getDueSoonMeds()
+                            .map((m) => _slotKey((m['medicine'] as Medicine).id ?? '', m['slot'] as int))
+                            .toSet();
+                        final upcoming = _getUpcomingMedsInWindow()
+                            .where((item) {
+                              final med = item['medicine'] as Medicine;
+                              final slotKey = _slotKey(med.id ?? '', item['slot'] as int);
+                              return !dueSoonKeys.contains(slotKey);
+                            })
+                            .toList();
                         if (upcoming.isEmpty) return const SizedBox.shrink();
 
                         return Column(
@@ -712,6 +767,67 @@ class _HomeScreenState extends State<HomeScreen> {
                             ...upcoming.map((item) {
                               return _buildTodayMedicineCard(item);
                             }),
+                            const SizedBox(height: 25),
+                          ],
+                        );
+                      },
+                    ),
+
+                    // Due Soon Panel (auto-shows/hides based on ±30 min window)
+                    Builder(
+                      builder: (context) {
+                        final dueSoon = _getDueSoonMeds();
+                        if (dueSoon.isEmpty) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFF0EA5E9), Color(0xFF0284C7)],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFF0EA5E9).withValues(alpha: 0.3),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(LucideIcons.bell, color: Colors.white, size: 20),
+                                      const SizedBox(width: 8),
+                                      const Text(
+                                        'Due Soon',
+                                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(alpha: 0.25),
+                                          borderRadius: BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          '${dueSoon.length}',
+                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  ...dueSoon.map((item) => _buildDueSoonCard(item)),
+                                ],
+                              ),
+                            ),
                             const SizedBox(height: 25),
                           ],
                         );
@@ -880,6 +996,90 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.green.withValues(alpha: 0.1),
                   padding: const EdgeInsets.all(8),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDueSoonCard(Map<String, dynamic> item) {
+    final med = item['medicine'] as Medicine;
+    final imagePath = med.imagePath;
+    final hasImage = imagePath != null && imagePath.isNotEmpty && _existingImagePaths.contains(imagePath);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: hasImage
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.file(File(imagePath), fit: BoxFit.cover),
+                  )
+                : const Icon(LucideIcons.pill, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  med.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  item['time'] as String,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white.withValues(alpha: 0.8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Skip this dose',
+                onPressed: () => _onSkipWindow(item),
+                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 24),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
+                  padding: const EdgeInsets.all(6),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Mark as taken',
+                onPressed: () => _onEarlyTake(item),
+                icon: const Icon(Icons.check_rounded, color: Colors.white, size: 24),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
+                  padding: const EdgeInsets.all(6),
                 ),
               ),
             ],

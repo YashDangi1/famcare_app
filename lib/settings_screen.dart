@@ -45,15 +45,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final fullscreen = prefs.getBool('alarm_style_fullscreen') ?? true;
 
       if (data != null && mounted) {
+        File? avatar;
+        if (data['avatar_url'] != null) {
+          final dir = await getApplicationDocumentsDirectory();
+          avatar = File('${dir.path}/${data['avatar_url']}');
+        }
         setState(() {
           _nameController.text = data['full_name'] ?? '';
           _ageController.text = data['age']?.toString() ?? '';
           _phoneController.text = data['phone_number'] ?? '';
           _selectedBloodGroup = data['blood_group'];
-          if (data['avatar_url'] != null) {
-            final dir = await getApplicationDocumentsDirectory();
-            _avatarImage = File('${dir.path}/${data['avatar_url']}');
-          }
+          _avatarImage = avatar;
           _alarmStyleFullscreen = fullscreen;
           _isLoading = false;
         });

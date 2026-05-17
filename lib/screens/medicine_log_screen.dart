@@ -223,10 +223,15 @@ class _MedicineLogScreenState extends State<MedicineLogScreen> {
         final timeSnoozed = loggedAt != null ? DateFormat('hh:mm a').format(loggedAt) : null;
         statusText = timeSnoozed != null ? "Due: $displayScheduledTime — Snoozed at $timeSnoozed" : "Due: $displayScheduledTime — Snoozed";
         break;
-      default:
-        icon = LucideIcons.helpCircle;
+      case 'skipped':
+        icon = LucideIcons.ban;
         color = Colors.grey;
-        statusText = "Due: $displayScheduledTime — Unknown";
+        statusText = "Due: $displayScheduledTime — Skipped";
+        break;
+      default:
+        icon = LucideIcons.ban;
+        color = Colors.grey;
+        statusText = "Due: $displayScheduledTime — Skipped";
     }
 
     return Container(
@@ -242,13 +247,29 @@ class _MedicineLogScreenState extends State<MedicineLogScreen> {
           Icon(icon, color: color, size: 24),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              statusText,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: Colors.black87,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  log['medicine_name'] as String? ?? widget.medicineName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  statusText,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
             ),
           ),
         ],
