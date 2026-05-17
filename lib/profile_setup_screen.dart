@@ -62,6 +62,10 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       AppSnackBar.showError(context, 'Please fill all fields');
       return;
     }
+    if (int.tryParse(_ageController.text.trim()) == null) {
+      AppSnackBar.showError(context, 'Please enter a valid age');
+      return;
+    }
 
     setState(() => _isLoading = true);
 
@@ -71,12 +75,12 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         await Supabase.instance.client.from('profiles').upsert({
           'id': user.id,
           'full_name': _fullNameController.text.trim(),
-          'age': int.parse(_ageController.text.trim()),
+          'age': int.tryParse(_ageController.text.trim()),
           'blood_group': _selectedBloodGroup,
           'phone_number': _phoneController.text.trim().isEmpty
               ? null
               : _phoneController.text.trim(),
-          'avatar_url': _avatarImage?.path,
+          'avatar_url': _avatarImage != null ? _avatarImage!.path.split('/').last : null,
           'updated_at': DateTime.now().toIso8601String(),
         });
 

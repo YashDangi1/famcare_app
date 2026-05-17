@@ -80,10 +80,10 @@ class Medicine {
         startDate: json['start_date'] != null 
             ? (DateTime.tryParse(json['start_date'].toString()) ?? DateTime.now())
             : DateTime.now(),
-        durationDays: int.tryParse(json['duration_days']?.toString() ?? '1') ?? 1,
+        durationDays: int.tryParse(json['duration_days']?.toString() ?? '7') ?? 7,
         qty: int.tryParse(json['qty']?.toString() ?? '0') ?? 0,
         counter: int.tryParse(json['counter']?.toString() ?? '0') ?? 0,
-        isActive: json['is_active'] == true || json['is_active']?.toString() == 'true',
+        isActive: json['is_active'] == true || json['is_active'] == 1 || json['is_active']?.toString() == 'true',
         isTaken: json['is_taken'] == true || json['is_taken']?.toString() == 'true',
         imagePath: json['image_path']?.toString(),
         createdAt: json['created_at'] != null 

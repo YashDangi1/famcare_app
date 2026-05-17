@@ -45,12 +45,14 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
   Timer? _autoDismissTimer;
   bool _isActionTaken = false;
   bool _isProcessing = false;
+  late bool _hasImage;
   late AnimationController _bellController;
   late Animation<double> _bellAnimation;
 
   @override
   void initState() {
     super.initState();
+    _hasImage = widget.imagePath != null && File(widget.imagePath!).existsSync();
     // Bell ringing animation
     _bellController = AnimationController(
       vsync: this,
@@ -316,7 +318,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                     border: Border.all(color: Colors.white.withOpacity(0.2), width: 2),
                   ),
                   child: ClipOval(
-                    child: widget.imagePath != null && File(widget.imagePath!).existsSync()
+                    child: _hasImage
                         ? Image.file(File(widget.imagePath!), fit: BoxFit.cover)
                         : const Icon(LucideIcons.pill, size: 80, color: Colors.white70),
                   ),

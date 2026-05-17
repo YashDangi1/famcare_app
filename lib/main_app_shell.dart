@@ -68,7 +68,10 @@ class _MainAppShellState extends State<MainAppShell> {
         .from('medications')
         .stream(primaryKey: ['id'])
         .eq('user_id', userId)
-        .listen((_) => _updatePendingMedsCount());
+        .listen(
+          (_) => _updatePendingMedsCount(),
+          onError: (e) => debugPrint('Meds stream error: $e'),
+        );
   }
 
   Future<void> _updatePendingMedsCount() async {
@@ -183,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   bool _isRefreshingDashboard = false;
   List<Medicine> _todaysMeds = [];
+  final Set<String> _existingImagePaths = {};
   Map<String, dynamic>? _latestVital;
 
   // New state variables for Quick Stats
@@ -228,7 +232,10 @@ class _HomeScreenState extends State<HomeScreen> {
         .from('medications')
         .stream(primaryKey: ['id'])
         .eq('user_id', userId)
-        .listen((_) => _initDashboard());
+        .listen(
+          (_) => _initDashboard(),
+          onError: (e) => debugPrint('Meds stream error: $e'),
+        );
   }
 
   String _slotKey(String medId, int slot) => '${medId}_$slot';
@@ -350,7 +357,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _onSkipWindow(Map<String, dynamic> med) async {
+  Future<void> _onSkipWindow(Map<String, dynamic> med) async {
     final medicine = med['medicine'] as Medicine;
     final slot = med['slot'] as int;
     final slotId = _slotKey(medicine.id ?? '', slot);
@@ -362,13 +369,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     // 2. Alarm cancel karo (warna bajta rahega)
-    final alarmId = slot == 1
-        ? medicine.alarmId1
-        : slot == 2
-            ? medicine.alarmId2
-            : medicine.alarmId3;
-    if (alarmId != null) {
-      await _alarmService.cancelAlarm(alarmId);
+    try {
+      final alarmId = slot == 1
+          ? medicine.alarmId1
+          : slot == 2
+              ? medicine.alarmId2
+              : medicine.alarmId3;
+      if (alarmId != null) {
+        await _alarmService.cancelAlarm(alarmId);
+      }
+    } catch (e) {
+      debugPrint('Cancel alarm error: $e');
     }
 
     // 3. DB mein save karo taaki refresh ke baad bhi survive kare
@@ -390,7 +401,9 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint('Skip log error: $e');
     }
 
-    AppSnackBar.showInfo(context, "Alarm cancelled for this dose");
+    if (mounted) {
+      AppSnackBar.showInfo(context, "Alarm cancelled for this dose");
+    }
   }
 
   Future<void> _initDashboard() async {
@@ -449,7 +462,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // Taken + skipped dono hide karo Today's Medicines se
       final hiddenSlotIds = allLogs
           .where((log) => log['medication_id'] != null && log['alarm_slot'] != null)
-          .map((log) => _slotKey(log['medication_id'].toString(), log['alarm_slot'] as int))
+          .map((log) => _slotKey(log['medication_id'].toString(), int.tryParse(log['alarm_slot'].toString()) ?? 1))
           .toSet();
       // Adherence ke liye sirf taken count karo
       int tempTaken = allLogs.where((log) => log['status'] == 'taken').length;
@@ -520,6 +533,15 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() {
           _todaysMeds = todaysMeds;
+          // Cache image existence to avoid sync I/O in build()
+          _existingImagePaths.clear();
+          for (final m in todaysMeds) {
+            if (m.imagePath != null && m.imagePath!.isNotEmpty) {
+              if (File(m.imagePath!).existsSync()) {
+                _existingImagePaths.add(m.imagePath!);
+              }
+            }
+          }
           _takenSlotIdsToday
             ..clear()
             ..addAll(hiddenSlotIds);
@@ -532,7 +554,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     log['medication_id'] != null &&
                     log['alarm_slot'] != null)
                 .map((log) => _slotKey(
-                    log['medication_id'].toString(), log['alarm_slot'] as int)));
+                    log['medication_id'].toString(), int.tryParse(log['alarm_slot'].toString()) ?? 1)));
           _latestVital = vitalsData;
           _totalMedsToday = tempTotal;
           _takenMedsToday = tempTaken;
@@ -579,9 +601,12 @@ class _HomeScreenState extends State<HomeScreen> {
     // Extract unique dates
     final takenDates = (logs as List)
         .map((log) {
-          final dt = DateTime.parse(log['created_at']).toLocal();
-          return DateTime(dt.year, dt.month, dt.day);
+          final dt = DateTime.tryParse(log['created_at']?.toString() ?? '');
+          if (dt == null) return null;
+          final local = dt.toLocal();
+          return DateTime(local.year, local.month, local.day);
         })
+        .whereType<DateTime>()
         .toSet();
 
     // Count consecutive days from today backwards
@@ -761,7 +786,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildTodayMedicineCard(Map<String, dynamic> item) {
     final med = item['medicine'] as Medicine;
     final imagePath = med.imagePath;
-    final hasImage = imagePath != null && imagePath.isNotEmpty && File(imagePath).existsSync();
+    final hasImage = imagePath != null && imagePath.isNotEmpty && _existingImagePaths.contains(imagePath);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1035,7 +1060,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (_latestVital!['bp_systolic'] != null) {
       mainLabel = 'Blood Pressure';
-      mainValue = '${_latestVital!['bp_systolic']}/${_latestVital!['bp_diastolic']} mmHg';
+      mainValue = '${_latestVital!['bp_systolic']}/${_latestVital!['bp_diastolic'] ?? '--'} mmHg';
       mainIcon = LucideIcons.activity;
     } else if (_latestVital!['heart_rate'] != null) {
       mainLabel = 'Heart Rate';

@@ -51,7 +51,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _phoneController.text = data['phone_number'] ?? '';
           _selectedBloodGroup = data['blood_group'];
           if (data['avatar_url'] != null) {
-            _avatarImage = File(data['avatar_url']);
+            final dir = await getApplicationDocumentsDirectory();
+            _avatarImage = File('${dir.path}/${data['avatar_url']}');
           }
           _alarmStyleFullscreen = fullscreen;
           _isLoading = false;
@@ -108,7 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ? null
             : _phoneController.text.trim(),
         'blood_group': _selectedBloodGroup,
-        'avatar_url': _avatarImage?.path,
+        'avatar_url': _avatarImage != null ? _avatarImage!.path.split('/').last : null,
         'updated_at': DateTime.now().toIso8601String(),
       });
       if (mounted) AppSnackBar.showSuccess(context, 'Profile Updated!');

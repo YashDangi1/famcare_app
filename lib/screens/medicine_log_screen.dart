@@ -39,7 +39,8 @@ class _MedicineLogScreenState extends State<MedicineLogScreen> {
       final statsResponse = await _supabase
           .from('medicine_logs')
           .select('status')
-          .eq('medication_id', widget.medicationId);
+          .eq('medication_id', widget.medicationId)
+          .limit(500);
 
       int taken = 0;
       int missed = 0;

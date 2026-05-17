@@ -512,7 +512,7 @@ Widget _buildPendingView() {
           const SizedBox(height: 12),
           // Yahan hum dikha rahe hain ki request "kis" family ko bheji gayi hai
           Text(
-            'You have requested to join: \n"${_familyGroup?['name']}"',
+            'You have requested to join: \n"${_familyGroup?['name'] ?? 'Unknown'}"',
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.w500),
           ),

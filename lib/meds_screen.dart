@@ -25,6 +25,8 @@ class MedsScreen extends StatefulWidget {
 class _MedsScreenState extends State<MedsScreen> {
   final _supabase = Supabase.instance.client;
   final _alarmService = AlarmService();
+  final Set<String> _existingImagePaths = {};
+  bool _isSaving = false;
   final _imagePicker = ImagePicker();
   List<Medicine> _medications = [];
   bool _isLoading = true;
@@ -62,6 +64,13 @@ class _MedsScreenState extends State<MedsScreen> {
       if (mounted) {
         setState(() {
           _medications = (data as List).map((m) => Medicine.fromJson(m)).toList();
+          // Cache image existence to avoid sync I/O in build()
+          _existingImagePaths.clear();
+          for (final m in _medications) {
+            if (m.imagePath != null && m.imagePath!.isNotEmpty && File(m.imagePath!).existsSync()) {
+              _existingImagePaths.add(m.imagePath!);
+            }
+          }
           _isLoading = false;
         });
       }
@@ -281,8 +290,12 @@ class _MedsScreenState extends State<MedsScreen> {
     required int qty,
     File? image,
   }) async {
+    if (_isSaving) return;
+    _isSaving = true;
+
     if (name.isEmpty) {
       AppSnackBar.showError(context, "Medicine name is required");
+      _isSaving = false;
       return;
     }
 
@@ -295,9 +308,12 @@ class _MedsScreenState extends State<MedsScreen> {
         imagePath = savedImage.path;
       }
 
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
       final med = Medicine(
         id: existingMed?.id,
-        userId: _supabase.auth.currentUser!.id,
+        userId: userId,
         name: name,
         dosage: dosage,
         frequency: freq,
@@ -389,6 +405,8 @@ class _MedsScreenState extends State<MedsScreen> {
     } catch (e) {
       debugPrint("Save Error: $e");
       if (mounted) AppSnackBar.showError(context, "Failed to save: $e");
+    } finally {
+      _isSaving = false;
     }
   }
 
@@ -402,7 +420,7 @@ class _MedsScreenState extends State<MedsScreen> {
     return next;
   }
 
-  Future<int> _scheduleSingleAlarm(Medicine med, int slot, TimeOfDay tod) async {
+  Future<int?> _scheduleSingleAlarm(Medicine med, int slot, TimeOfDay tod) async {
     final stableId = await _nextAlarmId();
     final now = DateTime.now();
     DateTime alarmTime = DateTime(now.year, now.month, now.day, tod.hour, tod.minute);
@@ -452,6 +470,7 @@ class _MedsScreenState extends State<MedsScreen> {
             'alarm_id1': med.alarmId1,
             'alarm_id2': med.alarmId2,
             'alarm_id3': med.alarmId3,
+            'slot': slot,
           }));
         } catch (_) {}
 
@@ -465,11 +484,11 @@ class _MedsScreenState extends State<MedsScreen> {
         return stableId;
       } catch (e) {
         debugPrint("❌ EXCEPTION while scheduling: $e");
-        return -1;
+        return null;
       }
     } else {
       debugPrint("❌ NOT SCHEDULED: alarmTime ($alarmTime) is after endDate ($endDateLimit)");
-      return -1;
+      return null;
     }
   }
 
@@ -904,7 +923,7 @@ class _MedsScreenState extends State<MedsScreen> {
                   child: Container(
                     width: 60, height: 60,
                     color: Colors.grey[200],
-                    child: med.imagePath != null && File(med.imagePath!).existsSync()
+                    child: med.imagePath != null && _existingImagePaths.contains(med.imagePath!)
                         ? Image.file(File(med.imagePath!), fit: BoxFit.cover, color: Colors.grey, colorBlendMode: BlendMode.saturation)
                         : Icon(LucideIcons.pill, color: Colors.grey[400], size: 28),
                   ),

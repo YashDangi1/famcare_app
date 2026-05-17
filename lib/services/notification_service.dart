@@ -38,7 +38,10 @@ class NotificationService {
 
       if (admins.isEmpty) return;
 
-      // 3. Get phone numbers for each admin from profiles
+      // 3. Find first admin with a phone number (send only one message)
+      String? targetPhone;
+      String targetName = 'Admin';
+
       for (var admin in admins) {
         final adminUserId = admin['user_id'];
         final profile = await supabase
@@ -48,32 +51,39 @@ class NotificationService {
             .maybeSingle();
 
         final phone = profile?['phone_number'] as String?;
-        final adminName = profile?['full_name'] ?? 'Admin';
-
-        if (phone == null || phone.isEmpty) {
-          debugPrint('NotificationService: No phone number for $adminName, skipping WhatsApp');
-          continue;
+        if (phone != null && phone.isNotEmpty) {
+          targetPhone = phone;
+          targetName = profile?['full_name'] ?? 'Admin';
+          break;
         }
+      }
 
-        // 4. Build WhatsApp message and launch
-        final timeStr =
-            '${scheduledTime.hour.toString().padLeft(2, '0')}:${scheduledTime.minute.toString().padLeft(2, '0')}';
-        final message = 'Hi $adminName, $patientName missed their dose of '
-            '$medicineName at $timeStr. Please check on them.';
+      if (targetPhone == null) {
+        debugPrint('NotificationService: No admin with phone number found');
+        return;
+      }
 
-        // Clean phone number: remove spaces, +, leading zeros
-        final cleanPhone = phone.replaceAll(RegExp(r'[\s+\-()]'), '');
+      // 4. Build WhatsApp message and launch
+      final timeStr =
+          '${scheduledTime.hour.toString().padLeft(2, '0')}:${scheduledTime.minute.toString().padLeft(2, '0')}';
+      final message = 'Hi $targetName, $patientName missed their dose of '
+          '$medicineName at $timeStr. Please check on them.';
 
-        final uri = Uri.parse(
-          'https://wa.me/$cleanPhone?text=${Uri.encodeComponent(message)}',
-        );
+      // Clean phone: remove spaces, +, dashes, parens; fix leading 0 (assume India +91)
+      var cleanPhone = targetPhone.replaceAll(RegExp(r'[\s+\-()]'), '');
+      if (cleanPhone.startsWith('0')) {
+        cleanPhone = '91${cleanPhone.substring(1)}';
+      }
 
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-          debugPrint('NotificationService: WhatsApp launched for $adminName ($cleanPhone)');
-        } else {
-          debugPrint('NotificationService: Could not launch WhatsApp for $adminName');
-        }
+      final uri = Uri.parse(
+        'https://wa.me/$cleanPhone?text=${Uri.encodeComponent(message)}',
+      );
+
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        debugPrint('NotificationService: WhatsApp launched for $targetName ($cleanPhone)');
+      } else {
+        debugPrint('NotificationService: Could not launch WhatsApp for $targetName');
       }
     } catch (e) {
       debugPrint('NotificationService Error: $e');

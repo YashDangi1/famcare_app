@@ -436,8 +436,13 @@ class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
       ]);
 
       Map<String, dynamic>? response;
-      for (final r in responses) {
-        if (r != null) { response = r as Map<String, dynamic>; break; }
+      int matchedSlot = 1;
+      for (int i = 0; i < responses.length; i++) {
+        if (responses[i] != null) {
+          response = responses[i] as Map<String, dynamic>;
+          matchedSlot = i + 1; // 1-indexed: alarm_id1→1, alarm_id2→2, alarm_id3→3
+          break;
+        }
       }
 
       if (response == null) {
@@ -445,6 +450,7 @@ class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
         activeAlarmIdNotifier.value = null;
         return;
       }
+      response['slot'] = matchedSlot;
       if (mounted) setState(() => _med = response);
     } catch (e) {
       debugPrint('DB load error: $e');
