@@ -17,6 +17,7 @@ class ProfileSetupScreen extends StatefulWidget {
 class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   final _fullNameController = TextEditingController();
   final _ageController = TextEditingController();
+  final _phoneController = TextEditingController();
   String? _selectedBloodGroup;
   File? _avatarImage;
   bool _isLoading = false;
@@ -72,6 +73,9 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
           'full_name': _fullNameController.text.trim(),
           'age': int.parse(_ageController.text.trim()),
           'blood_group': _selectedBloodGroup,
+          'phone_number': _phoneController.text.trim().isEmpty
+              ? null
+              : _phoneController.text.trim(),
           'avatar_url': _avatarImage?.path,
           'updated_at': DateTime.now().toIso8601String(),
         });
@@ -149,6 +153,17 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
               decoration: InputDecoration(
                 labelText: 'Age',
                 prefixIcon: const Icon(LucideIcons.calendar, size: 20),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(
+                labelText: 'Phone Number',
+                hintText: '+91 9876543210',
+                prefixIcon: const Icon(LucideIcons.phone, size: 20),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
               ),
             ),

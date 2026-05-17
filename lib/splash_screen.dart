@@ -24,7 +24,21 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (!mounted) return;
 
-    // 2. Check if user is already logged in
+    // 2. Guard: wait for Supabase to be ready (may not be in alarm mode)
+    int attempts = 0;
+    while (attempts < 30) {
+      try {
+        Supabase.instance.client;
+        break;
+      } catch (_) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        attempts++;
+      }
+    }
+
+    if (!mounted) return;
+
+    // 3. Check if user is already logged in
     final session = Supabase.instance.client.auth.currentSession;
 
     // 3. Navigate based on auth state

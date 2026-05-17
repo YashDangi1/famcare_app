@@ -4,9 +4,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:image_picker/image_picker.dart';
 import 'utils/snackbar_utils.dart';
+import 'services/activity_service.dart';
 
 class VaultScreen extends StatefulWidget {
-  const VaultScreen({super.key});
+  final String? targetUserId;
+  final String? targetUserName;
+
+  const VaultScreen({super.key, this.targetUserId, this.targetUserName});
 
   @override
   State<VaultScreen> createState() => _VaultScreenState();
@@ -27,7 +31,7 @@ class _VaultScreenState extends State<VaultScreen> {
     if (!mounted) return;
     setState(() => _isLoading = true);
     try {
-      final userId = _supabase.auth.currentUser?.id;
+      final userId = widget.targetUserId ?? _supabase.auth.currentUser?.id;
       if (userId == null) return;
 
       final data = await _supabase
@@ -168,6 +172,16 @@ class _VaultScreenState extends State<VaultScreen> {
         'image_url': imageUrl,
       });
 
+      // Log activity for new vault document
+      try {
+        await ActivityService.log(
+          actionType: 'VITALS_ADDED', // Vault is considered part of vitals/health records here
+          description: 'Uploaded a new document: $title',
+        );
+      } catch (e) {
+        debugPrint('Log error: $e');
+      }
+
       if (mounted) {
         AppSnackBar.showSuccess(context, 'Document saved to vault!');
         _fetchPrescriptions();
@@ -181,12 +195,40 @@ class _VaultScreenState extends State<VaultScreen> {
     }
   }
 
+  /// Resolves a public URL to a signed URL if needed (for non-public buckets).
+  Future<String> _resolveImageUrl(String imageUrl) async {
+    try {
+      // If the URL contains '/object/public/', it's already a public URL
+      if (imageUrl.contains('/object/public/')) {
+        return imageUrl;
+      }
+      // Extract the file path from the URL (after the bucket name)
+      final uri = Uri.parse(imageUrl);
+      final pathSegments = uri.pathSegments;
+      // Find the bucket path — typically after 'object/sign/' or 'object/public/'
+      final objectIndex = pathSegments.indexOf('object');
+      if (objectIndex != -1 && objectIndex + 2 < pathSegments.length) {
+        // pathSegments: [..., 'object', 'public' or 'sign', 'bucket', ...filePath]
+        final bucket = pathSegments[objectIndex + 2];
+        final filePath = pathSegments.sublist(objectIndex + 3).join('/');
+        final signedUrl = await _supabase.storage.from(bucket).createSignedUrl(filePath, 3600);
+        return signedUrl;
+      }
+      return imageUrl;
+    } catch (e) {
+      debugPrint('Image URL resolve error: $e');
+      return imageUrl;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isViewingOther = widget.targetUserId != null;
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Medical Vault', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(widget.targetUserName != null ? "${widget.targetUserName}'s Vault" : "My Vault", style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -200,10 +242,10 @@ class _VaultScreenState extends State<VaultScreen> {
                     children: [
                       Icon(LucideIcons.folderHeart, size: 80, color: Colors.grey[300]),
                       const SizedBox(height: 16),
-                      Text('Your vault is empty', 
+                      Text(isViewingOther ? 'No documents found' : 'Your vault is empty',
                         style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w500)),
                       const SizedBox(height: 8),
-                      Text('Securely store your medical reports here', 
+                      Text(isViewingOther ? 'This user has no uploaded documents yet' : 'Securely store your medical reports here',
                         style: TextStyle(fontSize: 14, color: Colors.grey[400])),
                     ],
                   ),
@@ -239,12 +281,20 @@ class _VaultScreenState extends State<VaultScreen> {
                             Expanded(
                               child: ClipRRect(
                                 borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-                                child: Image.network(
-                                  doc['image_url'],
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) => 
-                                    const Center(child: Icon(LucideIcons.imageOff, color: Colors.grey)),
+                                child: FutureBuilder<String>(
+                                  future: _resolveImageUrl(doc['image_url']),
+                                  builder: (context, snapshot) {
+                                    if (!snapshot.hasData) {
+                                      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                                    }
+                                    return Image.network(
+                                      snapshot.data!,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (context, error, stackTrace) =>
+                                        const Center(child: Icon(LucideIcons.imageOff, color: Colors.grey)),
+                                    );
+                                  },
                                 ),
                               ),
                             ),
@@ -263,7 +313,8 @@ class _VaultScreenState extends State<VaultScreen> {
                     );
                   },
                 ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: isViewingOther ? null : FloatingActionButton(
+        heroTag: 'vault_fab',
         onPressed: _uploadPrescription,
         backgroundColor: const Color(0xFF0EA5E9),
         child: const Icon(LucideIcons.plus, color: Colors.white),
@@ -272,7 +323,7 @@ class _VaultScreenState extends State<VaultScreen> {
   }
 }
 
-class FullScreenImageViewer extends StatelessWidget {
+class FullScreenImageViewer extends StatefulWidget {
   final String imageUrl;
   final String title;
 
@@ -283,32 +334,71 @@ class FullScreenImageViewer extends StatelessWidget {
   });
 
   @override
+  State<FullScreenImageViewer> createState() => _FullScreenImageViewerState();
+}
+
+class _FullScreenImageViewerState extends State<FullScreenImageViewer> {
+  final _supabase = Supabase.instance.client;
+  String? _resolvedUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveUrl();
+  }
+
+  Future<void> _resolveUrl() async {
+    try {
+      if (widget.imageUrl.contains('/object/public/')) {
+        setState(() => _resolvedUrl = widget.imageUrl);
+        return;
+      }
+      final uri = Uri.parse(widget.imageUrl);
+      final pathSegments = uri.pathSegments;
+      final objectIndex = pathSegments.indexOf('object');
+      if (objectIndex != -1 && objectIndex + 2 < pathSegments.length) {
+        final bucket = pathSegments[objectIndex + 2];
+        final filePath = pathSegments.sublist(objectIndex + 3).join('/');
+        final signedUrl = await _supabase.storage.from(bucket).createSignedUrl(filePath, 3600);
+        if (mounted) setState(() => _resolvedUrl = signedUrl);
+      } else {
+        if (mounted) setState(() => _resolvedUrl = widget.imageUrl);
+      }
+    } catch (e) {
+      debugPrint('Full image URL resolve error: $e');
+      if (mounted) setState(() => _resolvedUrl = widget.imageUrl);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Text(title, style: const TextStyle(color: Colors.white)),
+        title: Text(widget.title, style: const TextStyle(color: Colors.white)),
         backgroundColor: Colors.black,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
       ),
       body: Center(
-        child: InteractiveViewer(
-          panEnabled: true,
-          boundaryMargin: const EdgeInsets.all(20),
-          minScale: 0.5,
-          maxScale: 4.0,
-          child: Image.network(
-            imageUrl,
-            fit: BoxFit.contain,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return const Center(child: CircularProgressIndicator(color: Colors.white));
-            },
-            errorBuilder: (context, error, stackTrace) => 
-              const Center(child: Icon(LucideIcons.imageOff, color: Colors.white, size: 50)),
-          ),
-        ),
+        child: _resolvedUrl == null
+            ? const CircularProgressIndicator(color: Colors.white)
+            : InteractiveViewer(
+                panEnabled: true,
+                boundaryMargin: const EdgeInsets.all(20),
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.network(
+                  _resolvedUrl!,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return const Center(child: CircularProgressIndicator(color: Colors.white));
+                  },
+                  errorBuilder: (context, error, stackTrace) =>
+                    const Center(child: Icon(LucideIcons.imageOff, color: Colors.white, size: 50)),
+                ),
+              ),
       ),
     );
   }

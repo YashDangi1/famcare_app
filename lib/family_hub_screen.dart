@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:flutter/services.dart';
-import 'activity_feed_screen.dart';
+import 'screens/activity_feed_screen.dart';
+import 'screens/vitals_screen.dart';
+import 'screens/health_dashboard_screen.dart';
+import 'vault_screen.dart';
 import 'history_service.dart';
+import 'services/activity_service.dart';
 import 'utils/snackbar_utils.dart';
 
 class FamilyHubScreen extends StatefulWidget {
@@ -22,6 +26,7 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
   bool _isLoading = true;
   Map<String, dynamic>? _familyGroup;
   List<dynamic> _members = [];
+  String? _groupId;
   String? _myRole;
   String? _myStatus;
 
@@ -38,28 +43,38 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
     setState(() => _isLoading = true);
     try {
       final userId = _supabase.auth.currentUser?.id;
-      
+      if (userId == null) return;
+
       // 1. Get my membership details
       final membership = await _supabase
           .from('family_members')
           .select('role, status, group_id, family_groups(*)')
-          .eq('user_id', userId!)
+          .eq('user_id', userId)
           .maybeSingle();
 
       if (membership != null) {
         _myRole = membership['role'];
         _myStatus = membership['status'];
+        _groupId = membership['group_id']?.toString();
         _familyGroup = membership['family_groups'];
 
         // 2. Fetch all members of this group
         final membersData = await _supabase
             .from('family_members')
-            .select('user_id, role, status, profiles(full_name)')
+            .select('user_id, role, status, is_inform_contact, profiles(full_name)')
             .eq('group_id', membership['group_id']);
         
         if (mounted) setState(() => _members = membersData);
       } else {
-        if (mounted) setState(() => _familyGroup = null);
+        if (mounted) {
+          setState(() {
+            _familyGroup = null;
+            _groupId = null;
+            _myRole = null;
+            _myStatus = null;
+            _members = [];
+          });
+        }
       }
     } catch (e) {
       debugPrint('Fetch Error: $e');
@@ -110,10 +125,20 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
       // Joiner is MEMBER and PENDING
       await _supabase.from('family_members').insert({
         'group_id': group['id'],
-        'user_id': _supabase.auth.currentUser!.id,
+        'user_id': _supabase.auth.currentUser?.id,
         'role': 'member',
         'status': 'pending',
       });
+
+      // Log activity for joining family
+      try {
+        await ActivityService.log(
+          actionType: 'MEMBER_JOINED',
+          description: 'Requested to join the family group',
+        );
+      } catch (e) {
+        debugPrint('Log error: $e');
+      }
 
       await HistoryService.logAction(actionType: 'JOIN', description: 'Requested to join family $code');
       _joinController.clear();
@@ -123,19 +148,291 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
     }
   }
 
+  Future<void> _makeAdmin(String memberUserId, String memberName) async {
+    try {
+      if (_groupId == null) throw 'Group not found';
+
+      await _supabase
+          .from('family_members')
+          .update({'role': 'admin'})
+          .eq('group_id', _groupId!)
+          .eq('user_id', memberUserId);
+
+      if (mounted) {
+        AppSnackBar.showSuccess(context, 'Member promoted to admin');
+      }
+      await ActivityService.log(
+        actionType: 'ROLE_CHANGED',
+        description: 'Made $memberName an Admin',
+        targetMemberId: memberUserId,
+      );
+      await _fetchFamilyData();
+    } catch (e) {
+      _showError('Failed to make admin: $e');
+    }
+  }
+
+  Future<void> _removeMember(String memberUserId, String memberName) async {
+    try {
+      if (_groupId == null) throw 'Group not found';
+
+      await _supabase
+          .from('family_members')
+          .delete()
+          .eq('group_id', _groupId!)
+          .eq('user_id', memberUserId);
+
+      if (mounted) {
+        AppSnackBar.showSuccess(context, 'Member removed');
+      }
+      await ActivityService.log(
+        actionType: 'MEMBER_REMOVED',
+        description: 'Removed $memberName from the family group',
+        targetMemberId: memberUserId,
+      );
+      await _fetchFamilyData();
+    } catch (e) {
+      _showError('Failed to remove member: $e');
+    }
+  }
+
+  Future<void> _toggleInformContact(String memberUserId, bool isActive) async {
+    try {
+      if (_groupId == null) throw 'Group not found';
+
+      await _supabase
+          .from('family_members')
+          .update({'is_inform_contact': !isActive})
+          .eq('group_id', _groupId!)
+          .eq('user_id', memberUserId);
+
+      if (mounted) {
+        AppSnackBar.showSuccess(
+          context,
+          !isActive ? 'Added to inform list' : 'Removed from inform list',
+        );
+      }
+      await _fetchFamilyData();
+    } catch (e) {
+      _showError('Failed to update inform list: $e');
+    }
+  }
+
   Future<void> _handleAdminAction(String targetId, String action) async {
     try {
+      if (_groupId == null) throw 'Group not found';
+
       if (action == 'APPROVE') {
-        await _supabase.from('family_members').update({'status': 'approved'}).eq('user_id', targetId);
-      } else if (action == 'MAKE_ADMIN') {
-        await _supabase.from('family_members').update({'role': 'admin'}).eq('user_id', targetId);
-      } else if (action == 'REMOVE' || action == 'REJECT') {
-        await _supabase.from('family_members').delete().eq('user_id', targetId);
+        await _supabase
+            .from('family_members')
+            .update({'status': 'approved'})
+            .eq('group_id', _groupId!)
+            .eq('user_id', targetId);
+            
+        // Log activity for member approved
+        try {
+          await ActivityService.log(
+            actionType: 'MEMBER_JOINED',
+            description: 'A new member was approved and joined the family',
+            targetMemberId: targetId,
+          );
+        } catch (e) {
+          debugPrint('Log error: $e');
+        }
+
+        if (mounted) AppSnackBar.showSuccess(context, 'Member approved');
+      } else if (action == 'REJECT') {
+        await _supabase
+            .from('family_members')
+            .delete()
+            .eq('group_id', _groupId!)
+            .eq('user_id', targetId);
+        if (mounted) {
+          AppSnackBar.showSuccess(context, 'Request rejected');
+        }
       }
       _fetchFamilyData();
     } catch (e) {
       _showError('Action failed: $e');
     }
+  }
+
+  Future<void> _leaveGroup() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null || _groupId == null) return;
+
+    final confirmed = await _showConfirmationDialog(
+      title: 'Leave Group?',
+      message: 'Are you sure you want to leave this family group?',
+      confirmText: 'Leave',
+      confirmColor: Colors.red,
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _supabase
+          .from('family_members')
+          .delete()
+          .eq('group_id', _groupId!)
+          .eq('user_id', userId);
+      if (mounted) AppSnackBar.showSuccess(context, 'You left the group');
+      _fetchFamilyData();
+    } catch (e) {
+      _showError('Leave failed: $e');
+    }
+  }
+
+  Future<void> _deleteGroup() async {
+    if (!_canDeleteGroup || _groupId == null) return;
+
+    final confirmed = await _showConfirmationDialog(
+      title: 'Delete Group?',
+      message: 'This will permanently delete the family group and remove all members.',
+      confirmText: 'Delete',
+      confirmColor: Colors.red,
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _supabase.from('family_members').delete().eq('group_id', _groupId!);
+      await _supabase.from('family_groups').delete().eq('id', _groupId!);
+      if (mounted) AppSnackBar.showSuccess(context, 'Family group deleted');
+      _fetchFamilyData();
+    } catch (e) {
+      _showError('Delete failed: $e');
+    }
+  }
+
+  Future<void> _confirmAdminAction({
+    required String targetId,
+    String? targetName,
+    required String action,
+    required String title,
+    required String message,
+    required String confirmText,
+  }) async {
+    final confirmed = await _showConfirmationDialog(
+      title: title,
+      message: message,
+      confirmText: confirmText,
+      confirmColor: action == 'REMOVE' || action == 'REJECT' ? Colors.red : null,
+    );
+
+    if (confirmed == true) {
+      if (action == 'REMOVE') {
+        await _removeMember(targetId, targetName ?? 'Unknown');
+      } else {
+        await _handleAdminAction(targetId, action);
+      }
+    }
+  }
+
+  Future<bool?> _showConfirmationDialog({
+    required String title,
+    required String message,
+    required String confirmText,
+    Color? confirmColor,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              confirmText,
+              style: TextStyle(color: confirmColor ?? const Color(0xFF0EA5E9)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMemberViewOptions(String memberUserId, String memberName) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  "View $memberName's Data",
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(LucideIcons.layoutDashboard, color: Color(0xFF0EA5E9)),
+                title: const Text('View Dashboard'),
+                subtitle: const Text('Health overview and alerts'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => HealthDashboardScreen(
+                        targetUserId: memberUserId,
+                        targetUserName: memberName,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(LucideIcons.heartPulse, color: Color(0xFF0EA5E9)),
+                title: const Text('View Vitals'),
+                subtitle: const Text('Blood pressure, heart rate, and more'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => VitalsScreen(
+                        targetUserId: memberUserId,
+                        targetUserName: memberName,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(LucideIcons.folderHeart, color: Color(0xFF0EA5E9)),
+                title: const Text('View Vault'),
+                subtitle: const Text('Medical documents and prescriptions'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => VaultScreen(
+                        targetUserId: memberUserId,
+                        targetUserName: memberName,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showError(String msg) {
@@ -149,8 +446,22 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text('Family Hub', style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true, backgroundColor: Colors.white, elevation: 0,
+        title: const Text('Family Hub', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(LucideIcons.rss, color: Color(0xFF0EA5E9)),
+            tooltip: 'Feed',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const ActivityFeedScreen(),
+              ),
+            ),
+          ),
+        ],
       ),
       body: _isLoading 
           ? const Center(child: CircularProgressIndicator()) 
@@ -218,6 +529,16 @@ Widget _buildPendingView() {
             label: const Text('Check Status'),
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0EA5E9), foregroundColor: Colors.white),
           ),
+          if (_myRole != 'admin') ...[
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _leaveGroup,
+              child: const Text(
+                'Leave Group',
+                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
         ],
       ),
     ),
@@ -236,8 +557,6 @@ Widget _buildPendingView() {
         children: [
           _buildFamilyHeader(),
           const SizedBox(height: 16),
-          _buildActivityFeedButton(),
-          
           if (isMeAdmin && pending.isNotEmpty) ...[
             const SizedBox(height: 30),
             const Text('Pending Requests', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.orange)),
@@ -249,6 +568,44 @@ Widget _buildPendingView() {
           Text('Family Members', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           ...approved.map((m) => _buildMemberTile(m, isRequest: false)),
+          const SizedBox(height: 28),
+          if (!isMeAdmin)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _leaveGroup,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  side: const BorderSide(color: Colors.redAccent),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text('Leave Group', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          if (isMeAdmin && _canDeleteGroup)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _deleteGroup,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text('Delete Group', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ),
+          if (isMeAdmin && !_canDeleteGroup)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                'Delete Group is available only when you are the sole admin.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ),
         ],
       ),
     );
@@ -293,69 +650,178 @@ Widget _buildPendingView() {
     );
   }
 
-  Widget _buildActivityFeedButton() {
-    return InkWell(
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (ctx) => const ActivityFeedScreen())),
-      borderRadius: BorderRadius.circular(15),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: Colors.grey[200]!),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: const Color(0xFF0EA5E9).withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-              child: const Icon(LucideIcons.activity, color: Color(0xFF0EA5E9)),
-            ),
-            const SizedBox(width: 16),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Family Activity Feed', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  Text('See latest health updates from family', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                ],
+  Widget _buildMemberTile(dynamic m, {required bool isRequest}) {
+    final isTargetAdmin = m['role'] == 'admin';
+    final isItMe = m['user_id'] == _supabase.auth.currentUser?.id;
+    final isMeAdmin = _myRole == 'admin';
+    final memberName = m['profiles']?['full_name'] ?? 'Family Member';
+    final roleLabel = isTargetAdmin ? '👑 Admin' : '👤 Member';
+    final roleColor = isTargetAdmin ? Colors.orange : const Color(0xFF0EA5E9);
+    final statusLabel = isRequest ? 'Pending' : 'Active';
+    final statusColor = isRequest ? Colors.orange : Colors.green;
+    final isInformContact = m['is_inform_contact'] == true;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                backgroundColor: const Color(0xFF0EA5E9).withOpacity(0.1),
+                child: const Icon(LucideIcons.user, size: 20, color: Color(0xFF0EA5E9)),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(memberName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildBadge(
+                          roleLabel,
+                          backgroundColor: roleColor.withOpacity(0.12),
+                          textColor: roleColor,
+                        ),
+                        _buildBadge(
+                          statusLabel,
+                          backgroundColor: statusColor.withOpacity(0.12),
+                          textColor: statusColor,
+                        ),
+                        if (isItMe)
+                          _buildBadge(
+                            'You',
+                            backgroundColor: Colors.grey.withOpacity(0.12),
+                            textColor: Colors.grey[700]!,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isRequest ? 'This member is waiting for admin approval.' : 'Family access is active.',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
+          if (isMeAdmin) ...[
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _showMemberViewOptions(m['user_id'], memberName),
+                  icon: const Icon(LucideIcons.eye, size: 16),
+                  label: const Text('View'),
+                ),
+                if (!isRequest && !isItMe)
+                  IconButton(
+                    tooltip: 'Notify on missed dose',
+                    onPressed: () => _toggleInformContact(
+                      m['user_id'],
+                      isInformContact,
+                    ),
+                    icon: Icon(
+                      isInformContact
+                          ? Icons.notifications
+                          : Icons.notifications_none,
+                      color: isInformContact ? Colors.amber[700] : Colors.grey,
+                    ),
+                  ),
+                if (isRequest && !isItMe) ...[
+                  ElevatedButton.icon(
+                    onPressed: () => _handleAdminAction(m['user_id'], 'APPROVE'),
+                    icon: const Icon(LucideIcons.check, size: 16),
+                    label: const Text('Approve'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _confirmAdminAction(
+                      targetId: m['user_id'],
+                      action: 'REJECT',
+                      title: 'Reject Request?',
+                      message: 'Remove this pending member request from the family group?',
+                      confirmText: 'Reject',
+                    ),
+                    icon: const Icon(LucideIcons.x, size: 16),
+                    label: const Text('Reject'),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                  ),
+                ] else if (!isItMe) ...[
+                  if (!isTargetAdmin)
+                    ElevatedButton.icon(
+                      onPressed: () => _makeAdmin(m['user_id'], memberName),
+                      icon: const Icon(LucideIcons.shieldCheck, size: 16),
+                      label: const Text('Make Admin'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0EA5E9),
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  OutlinedButton.icon(
+                    onPressed: () => _confirmAdminAction(
+                      targetId: m['user_id'],
+                      targetName: memberName,
+                      action: 'REMOVE',
+                      title: 'Remove Member?',
+                      message: 'Are you sure you want to remove $memberName from the group?',
+                      confirmText: 'Remove',
+                    ),
+                    icon: const Icon(LucideIcons.userMinus, size: 16),
+                    label: const Text('Remove'),
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                  ),
+                ],
+              ],
             ),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
           ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _buildMemberTile(dynamic m, {required bool isRequest}) {
-    final isTargetAdmin = m['role'] == 'admin';
-    final isItMe = m['user_id'] == _supabase.auth.currentUser?.id;
+  bool get _canDeleteGroup {
+    if (_myRole != 'admin') return false;
+    final adminCount = _members.where((m) => m['role'] == 'admin' && m['status'] == 'approved').length;
+    return adminCount == 1;
+  }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      child: ListTile(
-        leading: CircleAvatar(backgroundColor: const Color(0xFF0EA5E9).withOpacity(0.1), child: const Icon(LucideIcons.user, size: 20, color: Color(0xFF0EA5E9))),
-        title: Text(m['profiles']?['full_name'] ?? 'Family Member', style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: isRequest 
-            ? const Text('Wants to join', style: TextStyle(color: Colors.orange, fontSize: 12))
-            : Text(isTargetAdmin ? 'ADMIN' : 'MEMBER', style: TextStyle(color: isTargetAdmin ? Colors.orange : Colors.green, fontWeight: FontWeight.bold, fontSize: 10)),
-        trailing: isRequest
-            ? Row(mainAxisSize: MainAxisSize.min, children: [
-                IconButton(icon: const Icon(LucideIcons.checkCircle, color: Colors.green), onPressed: () => _handleAdminAction(m['user_id'], 'APPROVE')),
-                IconButton(icon: const Icon(LucideIcons.xCircle, color: Colors.red), onPressed: () => _handleAdminAction(m['user_id'], 'REJECT')),
-              ])
-            : (_myRole == 'admin' && !isItMe) 
-                ? PopupMenuButton<String>(
-                    onSelected: (val) => _handleAdminAction(m['user_id'], val),
-                    itemBuilder: (ctx) => [
-                      if (!isTargetAdmin) const PopupMenuItem(value: 'MAKE_ADMIN', child: Text('Make Admin')),
-                      const PopupMenuItem(value: 'REMOVE', child: Text('Remove Member', style: TextStyle(color: Colors.red))),
-                    ],
-                  )
-                : null,
+  Widget _buildBadge(
+    String label, {
+    required Color backgroundColor,
+    required Color textColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: textColor,
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+        ),
       ),
     );
   }

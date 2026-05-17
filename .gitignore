@@ -44,3 +44,14 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .env
+
+# Sensitive files
+.env
+*.keystore
+key.properties
+google-services.json
+GoogleService-Info.plist
+
+# Android local files  
+android/local.properties
+android/key.properties

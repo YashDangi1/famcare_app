@@ -80,14 +80,27 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
                 }
 
                 final now = DateTime.now();
-                final alarmTime = DateTime(now.year, now.month, now.day, selectedTime!.hour, selectedTime!.minute);
+                var alarmTime = DateTime(now.year, now.month, now.day, selectedTime!.hour, selectedTime!.minute);
+                
+                // If the time has already passed today OR is within the next 2 minutes, schedule for tomorrow
+                if (alarmTime.isBefore(now.add(const Duration(minutes: 2)))) {
+                  alarmTime = alarmTime.add(const Duration(days: 1));
+                }
+
+                final h12 = selectedTime!.hour == 0 ? 12 : (selectedTime!.hour > 12 ? selectedTime!.hour - 12 : selectedTime!.hour);
+                final period = selectedTime!.period == DayPeriod.am ? "AM" : "PM";
+                final timeStr = "${h12.toString().padLeft(2, '0')}:${selectedTime!.minute.toString().padLeft(2, '0')} $period";
 
                 // Create Model
                 final newMed = Medicine(
                   name: nameController.text,
-                  dose: doseController.text,
-                  morning: 1, afternoon: 0, night: 0, instructions: "",
-                  morningTime: alarmTime,
+                  dosage: doseController.text,
+                  frequency: 1,
+                  time1: timeStr,
+                  startDate: DateTime.now(),
+                  durationDays: 7,
+                  qty: 10,
+                  counter: 0,
                 );
 
                 setState(() => medicines.add(newMed));
@@ -95,8 +108,9 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
                 // Set Local Alarm
                 await alarmService.scheduleAlarm(
                   id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-                  title: newMed.name,
-                  body: "Time for your ${newMed.dose} dose!",
+                  medicineName: newMed.name,
+                  dosage: newMed.dosage,
+                  imagePath: newMed.imagePath ?? '',
                   time: alarmTime,
                 );
 
@@ -216,11 +230,11 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
           child: ListTile(
             leading: const Icon(Icons.medication, color: Color(0xFF0EA5E9)),
             title: Text(med.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text("Dose: ${med.dose}"),
+            subtitle: Text("Dose: ${med.dosage}"),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.notifications_active, color: med.morningTime != null ? Colors.green : Colors.grey[300]),
+                Icon(Icons.notifications_active, color: med.time1 != null ? Colors.green : Colors.grey[300]),
                 IconButton(
                   icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                   onPressed: () => _confirmDelete(i),

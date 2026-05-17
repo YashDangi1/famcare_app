@@ -7,7 +7,10 @@ import '../services/vitals_service.dart';
 import 'vitals_input_sheet.dart';
 
 class VitalsScreen extends StatefulWidget {
-  const VitalsScreen({super.key});
+  final String? targetUserId;
+  final String? targetUserName;
+
+  const VitalsScreen({super.key, this.targetUserId, this.targetUserName});
 
   @override
   State<VitalsScreen> createState() => _VitalsScreenState();
@@ -36,8 +39,8 @@ class _VitalsScreenState extends State<VitalsScreen> {
     
     try {
       // Start fetching
-      final latestFuture = _vitalsService.getLatestVitals();
-      final historyFuture = _vitalsService.getVitalsHistory();
+      final latestFuture = _vitalsService.getLatestVitals(userId: widget.targetUserId);
+      final historyFuture = _vitalsService.getVitalsHistory(userId: widget.targetUserId);
       
       // Wait for both, and add a small minimum delay for the shimmer to be visible
       final results = await Future.wait([
@@ -126,7 +129,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: const Text('Vitals Tracker', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+        title: Text(widget.targetUserName != null ? "${widget.targetUserName}'s Vitals" : "My Vitals", style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -179,7 +182,8 @@ class _VitalsScreenState extends State<VitalsScreen> {
                 ),
               ),
             ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: widget.targetUserId != null ? null : FloatingActionButton(
+        heroTag: 'add_vitals_fab',
         onPressed: _showVitalsInput,
         backgroundColor: const Color(0xFF0EA5E9),
         child: const Icon(LucideIcons.plus, color: Colors.white),
@@ -332,7 +336,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
           lineBarsData: [
             LineChartBarData(
               spots: heartRateData.asMap().entries.map((e) {
-                return FlSpot(e.key.toDouble(), e.value['heart_rate'].toDouble());
+                return FlSpot(e.key.toDouble(), double.tryParse(e.value['heart_rate'].toString()) ?? 0);
               }).toList(),
               isCurved: true,
               curveSmoothness: 0.35,

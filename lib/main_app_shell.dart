@@ -3,15 +3,21 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons/lucide_icons.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:intl/intl.dart';
+import 'services/alarm_service.dart';
+import 'utils/snackbar_utils.dart';
 
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'models/medicine_model.dart';
+import 'screens/alarm_setup_screen.dart';
 import 'family_hub_screen.dart';
 import 'screens/vitals_screen.dart';
 import 'meds_screen.dart';
-import 'screens/prescription_screen.dart';
 import 'vault_screen.dart';
-import 'history_service.dart';
 import 'settings_screen.dart';
+import 'screens/health_dashboard_screen.dart';
+import 'services/activity_service.dart';
 
 // ==========================================
 // 1. MAIN APP SHELL (Navigation + Alarm Logic)
@@ -25,36 +31,33 @@ class MainAppShell extends StatefulWidget {
 
 class _MainAppShellState extends State<MainAppShell> {
   int _currentIndex = 0;
-  late final List<Widget> _pages;
+  int _homeRefreshVersion = 0;
   
   final _supabase = Supabase.instance.client;
-  final _audioPlayer = AudioPlayer();
-  Timer? _alarmCheckTimer;
-  final Set<String> _triggeredToday = {};
-  String _lastResetDate = '';
-  final Map<String, Future<void>> _pendingReminders = {}; 
   int _pendingMedsCount = 0;
   StreamSubscription? _medsSubscription;
 
   @override
   void initState() {
     super.initState();
-    
-    // Tab Pages Definition
-    _pages = [
-      HomeScreen(onTabChange: (index) => setState(() => _currentIndex = index)), // Tab 0
-      const MedsScreen(),           // Tab 1
-      const VitalsScreen(),         // Tab 2
-      const VaultScreen(),          // Tab 3
-      const FamilyHubScreen(),      // Tab 4
-    ];
-
-    // 🔥 Global Alarm Checker (Every 5 seconds)
-    _alarmCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) => _checkAlarms());
 
     // Listen for medication changes to update badge
     _setupMedsSubscription();
     _updatePendingMedsCount();
+    _checkFirstLaunchPermissions();
+  }
+
+  List<Widget> _buildPages() {
+    return [
+      HomeScreen(
+        key: ValueKey('home_$_homeRefreshVersion'),
+        onTabChange: (index) => setState(() => _currentIndex = index),
+      ),
+      const MedsScreen(),
+      const VitalsScreen(),
+      const VaultScreen(),
+      const FamilyHubScreen(),
+    ];
   }
 
   void _setupMedsSubscription() {
@@ -73,11 +76,16 @@ class _MainAppShellState extends State<MainAppShell> {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) return;
 
+      final today = DateTime.now().toIso8601String().split('T')[0];
+      
+      // ✅ Aaj ke active medicines count karo
       final response = await _supabase
           .from('medications')
           .select('id')
           .eq('user_id', userId)
-          .eq('is_taken', false);
+          .eq('is_active', true)
+          .lte('start_date', today)
+          .gte('end_date', today);
       
       if (mounted) {
         setState(() {
@@ -89,160 +97,55 @@ class _MainAppShellState extends State<MainAppShell> {
     }
   }
 
+  Future<void> _checkFirstLaunchPermissions() async {
+    final prefs = await SharedPreferences.getInstance();
+    final setupDone = prefs.getBool('alarm_setup_done') ?? false;
+
+    if (!setupDone) {
+      final notif = await Permission.notification.isGranted;
+      final exact = await Permission.scheduleExactAlarm.isGranted;
+      final battery = await Permission.ignoreBatteryOptimizations.isGranted;
+
+      if (!notif || !exact || !battery) {
+        await Future.delayed(const Duration(milliseconds: 800));
+        if (mounted) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const AlarmSetupScreen(showAsOnboarding: true),
+            ),
+          );
+          await prefs.setBool('alarm_setup_done', true);
+        }
+      } else {
+        await prefs.setBool('alarm_setup_done', true);
+      }
+    }
+  }
+
   @override
   void dispose() {
-    _alarmCheckTimer?.cancel();
     _medsSubscription?.cancel();
-    _audioPlayer.dispose();
     super.dispose();
-  }
-
-  // --- Alarm Logic ---
-  Future<void> _checkAlarms() async {
-    // Reset triggered alarms and reset is_taken flag at midnight
-    final today = DateTime.now().toIso8601String().split('T')[0];
-    if (_lastResetDate.isNotEmpty && _lastResetDate != today) {
-      final user = _supabase.auth.currentUser;
-      if (user != null) {
-        // Daily Reset: Set is_taken = false for ALL medications of the current user
-        try {
-          await _supabase
-              .from('medications')
-              .update({'is_taken': false})
-              .eq('user_id', user.id)
-              .eq('is_taken', true);
-          
-          _triggeredToday.clear();
-          _lastResetDate = today;
-          debugPrint("Daily Reset: All medications marked as not taken for today.");
-          if (mounted) setState(() {});
-        } catch (e) {
-          debugPrint("Daily Reset Error: $e");
-        }
-      }
-    } else if (_lastResetDate.isEmpty) {
-      _lastResetDate = today;
-    }
-
-    try {
-      final user = _supabase.auth.currentUser;
-      if (user == null) return;
-
-      final data = await _supabase
-          .from('medications')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('is_taken', false);
-
-      final now = DateTime.now();
-      final currentMinute = now.hour * 60 + now.minute;
-
-      for (var med in data) {
-        String medTime = med['time'] ?? ""; 
-        final medMinute = _parseTimeToMinutes(medTime);
-        
-        // Check if within 1 minute window (accounts for 5-second polling)
-        if ((currentMinute - medMinute).abs() <= 1) {
-          String alarmId = "${med['id']}_${now.hour}_${now.minute}";
-          
-          if (!_triggeredToday.contains(alarmId)) {
-            _triggeredToday.add(alarmId);
-            _triggerInAppAlarm(med);
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint("Alarm Check Error: $e");
-    }
-  }
-
-  int _parseTimeToMinutes(String timeStr) {
-    // Handle "02:30 PM" or "2:30 PM" or "14:30" formats
-    try {
-      final parts = timeStr.trim().toUpperCase().split(' ');
-      if (parts.length == 2) {
-        final timeParts = parts[0].split(':');
-        var hour = int.parse(timeParts[0]);
-        final minute = int.parse(timeParts[1]);
-        final period = parts[1];
-        
-        if (period == 'PM' && hour != 12) hour += 12;
-        if (period == 'AM' && hour == 12) hour = 0;
-        return hour * 60 + minute;
-      } else if (parts.length == 1 && timeStr.contains(':')) {
-        // Handle 24h format "14:30"
-        final timeParts = timeStr.split(':');
-        return int.parse(timeParts[0]) * 60 + int.parse(timeParts[1]);
-      }
-    } catch (e) {
-      debugPrint('Time parse error for "$timeStr": $e');
-    }
-    return -1;
-  }
-
-  void _triggerInAppAlarm(Map<String, dynamic> med) async {
-    if (!mounted) return;
-    
-    final medId = med['id']?.toString() ?? '';
-    final now = DateTime.now();
-    final triggerKey = "${medId}_${now.hour}_${now.minute}";
-
-    // 1. Show UI overlay immediately
-    if (!context.mounted) return;
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: false,
-      pageBuilder: (context, _, __) => AlarmOverlay(
-        medicine: med, 
-        player: _audioPlayer,
-        onActionTaken: () => setState(() {}),
-        onRemindLater: () {
-          // Trigger Bug Fix: Remove from triggered set BEFORE scheduling delay
-          _triggeredToday.remove(triggerKey);
-          
-          Future.delayed(
-            const Duration(minutes: 15),
-            () => _triggerInAppAlarm(med),
-          );
-        },
-      ),
-    );
-
-    // 2. Setup and play audio
-    try {
-      await _audioPlayer.stop();
-      
-      // Ensure audio plays loudly like an alarm, bypassing silent mode if possible
-      await _audioPlayer.setAudioContext(AudioContext(
-        android: const AudioContextAndroid(
-          usageType: AndroidUsageType.alarm,
-          contentType: AndroidContentType.sonification,
-          audioFocus: AndroidAudioFocus.gainTransientExclusive,
-        ),
-        iOS: AudioContextIOS(
-          category: AVAudioSessionCategory.playback,
-          options: const {AVAudioSessionOptions.mixWithOthers},
-        ),
-      ));
-
-      await _audioPlayer.setReleaseMode(ReleaseMode.loop);
-      // AssetSource automatically prefixes 'assets/', so this maps to 'assets/alarm.mp3'
-      await _audioPlayer.play(AssetSource('alarm.mp3')); 
-    } catch (e) {
-      debugPrint("Audio Play Error: $e");
-    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final pages = _buildPages();
+
     return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: _pages),
+      body: IndexedStack(index: _currentIndex, children: pages),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: const Color(0xFF0EA5E9),
         unselectedItemColor: Colors.grey,
         type: BottomNavigationBarType.fixed,
-        onTap: (index) => setState(() => _currentIndex = index),
+        onTap: (index) => setState(() {
+          if (index == 0 && _currentIndex != 0) {
+            _homeRefreshVersion++;
+          }
+          _currentIndex = index;
+        }),
         items: [
           const BottomNavigationBarItem(icon: Icon(LucideIcons.home), label: 'Home'),
           BottomNavigationBarItem(
@@ -275,9 +178,11 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _supabase = Supabase.instance.client;
+  final _alarmService = AlarmService();
   String? _fullName;
   bool _isLoading = true;
-  List<dynamic> _upcomingMeds = [];
+  bool _isRefreshingDashboard = false;
+  List<Medicine> _todaysMeds = [];
   Map<String, dynamic>? _latestVital;
 
   // New state variables for Quick Stats
@@ -286,70 +191,429 @@ class _HomeScreenState extends State<HomeScreen> {
   int _familyCount = 0;
   int _streakDays = 0;
 
+  // Next Medication Data
+  Map<String, dynamic>? _nextMedData;
+  String? _nextMedTimeLabel;
+
+  // Quick Action refresh + local slot tracking
+  Timer? _minuteTimer;
+  StreamSubscription? _medsSubscription;
+  final Set<String> _takenSlotIdsToday = {};
+  final Set<String> _skippedSlotIds = {}; // Format: "medId_slot"
+
   @override
   void initState() {
     super.initState();
     _initDashboard();
+    _setupMedsSubscription();
+    _minuteTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+      if (mounted) {
+        _initDashboard();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _minuteTimer?.cancel();
+    _medsSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _setupMedsSubscription() {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    _medsSubscription = _supabase
+        .from('medications')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .listen((_) => _initDashboard());
+  }
+
+  String _slotKey(String medId, int slot) => '${medId}_$slot';
+
+  List<Map<String, dynamic>> _getUpcomingMedsInWindow() {
+    List<Map<String, dynamic>> upcoming = [];
+    final now = DateTime.now();
+
+    for (var med in _todaysMeds) {
+      final times = [med.time1, med.time2, med.time3];
+      for (int index = 0; index < times.length; index++) {
+        final timeStr = times[index];
+        final slot = index + 1;
+        if (timeStr != null && timeStr.isNotEmpty) {
+          try {
+            final parsedTime = DateFormat('hh:mm a').parse(timeStr.trim());
+            final scheduledDateTime = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              parsedTime.hour,
+              parsedTime.minute,
+            );
+
+            final difference = scheduledDateTime.difference(now).inMinutes;
+            final slotKey = _slotKey(med.id ?? '', slot);
+
+            if (difference >= -30 &&
+                difference <= 30 &&
+                !_takenSlotIdsToday.contains(slotKey) &&
+                !_skippedSlotIds.contains(slotKey)) {
+              upcoming.add({
+                'medicine': med,
+                'slot': slot,
+                'time': timeStr,
+                'dateTime': scheduledDateTime,
+              });
+            }
+          } catch (e) {
+            debugPrint('Time parse error: $e');
+          }
+        }
+      }
+    }
+    upcoming.sort(
+      (a, b) => (a['dateTime'] as DateTime).compareTo(b['dateTime'] as DateTime),
+    );
+    return upcoming;
+  }
+
+  Future<void> _onEarlyTake(Map<String, dynamic> med) async {
+    try {
+      final medicine = med['medicine'] as Medicine;
+      final medId = medicine.id;
+      final int slot = med['slot'] as int;
+      final scheduledTime = med['dateTime'] as DateTime;
+      if (medId == null) {
+        throw Exception('Medicine ID is missing');
+      }
+      final alarmId = slot == 1
+          ? medicine.alarmId1
+          : slot == 2
+              ? medicine.alarmId2
+              : medicine.alarmId3;
+
+      // 1. Cancel alarm
+      if (alarmId != null) {
+        await _alarmService.cancelAlarm(alarmId);
+      }
+
+      // 2. Decrement qty — fresh DB fetch to avoid stale data
+      final latest = await _supabase
+          .from('medications')
+          .select('qty')
+          .eq('id', medId)
+          .single();
+      final currentQty = int.tryParse(latest['qty'].toString()) ?? 0;
+      final newQty = (currentQty - 1).clamp(0, 99999);
+
+      await _supabase
+          .from('medications')
+          .update({'qty': newQty, if (newQty == 0) 'is_active': false})
+          .eq('id', medId);
+
+      // 3. Log to medicine_logs
+      final userId = _supabase.auth.currentUser?.id;
+      final medicineName = medicine.name;
+      await _supabase.from('medicine_logs').insert({
+        'user_id': userId,
+        'medication_id': medId,
+        'medicine_name': medicineName,
+        'dosage': medicine.dosage,
+        'status': 'taken',
+        'alarm_slot': slot,
+        'scheduled_time': scheduledTime.toIso8601String(),
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      // 4. Activity Log
+      try {
+        await ActivityService.log(
+          actionType: 'MEDICINE_TAKEN',
+          description: 'Took $medicineName',
+        );
+      } catch (e) {
+        debugPrint('Feed log error: $e');
+      }
+
+      // 5. Update UI
+      if (mounted) {
+        _takenSlotIdsToday.add(_slotKey(medId, slot));
+        _skippedSlotIds.remove(_slotKey(medId, slot));
+        AppSnackBar.showSuccess(context, "Medicine marked as taken early!");
+        _initDashboard(); // Refresh all data
+      }
+    } catch (e) {
+      debugPrint("Error in _onEarlyTake: $e");
+      if (mounted) AppSnackBar.showError(context, "Error: $e");
+    }
+  }
+
+  void _onSkipWindow(Map<String, dynamic> med) async {
+    final medicine = med['medicine'] as Medicine;
+    final slot = med['slot'] as int;
+    final slotId = _slotKey(medicine.id ?? '', slot);
+    final scheduledTime = med['dateTime'] as DateTime;
+
+    // 1. UI se immediately hatao
+    setState(() {
+      _skippedSlotIds.add(slotId);
+    });
+
+    // 2. Alarm cancel karo (warna bajta rahega)
+    final alarmId = slot == 1
+        ? medicine.alarmId1
+        : slot == 2
+            ? medicine.alarmId2
+            : medicine.alarmId3;
+    if (alarmId != null) {
+      await _alarmService.cancelAlarm(alarmId);
+    }
+
+    // 3. DB mein save karo taaki refresh ke baad bhi survive kare
+    try {
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId != null && medicine.id != null) {
+        await _supabase.from('medicine_logs').insert({
+          'user_id': userId,
+          'medication_id': medicine.id,
+          'medicine_name': medicine.name,
+          'dosage': medicine.dosage,
+          'status': 'skipped',
+          'alarm_slot': slot,
+          'scheduled_time': scheduledTime.toIso8601String(),
+          'created_at': DateTime.now().toIso8601String(),
+        });
+      }
+    } catch (e) {
+      debugPrint('Skip log error: $e');
+    }
+
+    AppSnackBar.showInfo(context, "Alarm cancelled for this dose");
   }
 
   Future<void> _initDashboard() async {
+    if (_isRefreshingDashboard) return;
+    _isRefreshingDashboard = true;
     try {
-      final user = _supabase.auth.currentUser;
-      if (user != null) {
-        // Fetch Profile Name
-        final profileData = await _supabase.from('profiles').select('full_name').eq('id', user.id).maybeSingle();
-        if (profileData != null && mounted) setState(() => _fullName = profileData['full_name']);
-        
-        // Fetch Upcoming Meds (is_taken false, ordered by time)
-        final medsData = await _supabase.from('medications')
-            .select('*')
-            .eq('user_id', user.id)
-            .eq('is_taken', false)
-            .order('time', ascending: true);
-        
-        // Fetch Latest Vital
-        final vitalsData = await _supabase.from('vitals')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('measured_at', ascending: false)
-            .limit(1)
-            .maybeSingle();
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) return;
 
-        // Task 2: Fetch Quick Stats
-        final allMedsToday = await _supabase.from('medications')
-            .select('is_taken')
-            .eq('user_id', user.id);
-        
-        // Fetch Family Members (if there's a family_groups table or similar)
-        // For now, let's check if the user is in a group
-        final familyData = await _supabase.from('family_members')
-            .select('group_id')
-            .eq('user_id', user.id)
-            .maybeSingle();
-        
-        int familyMembers = 0;
-        if (familyData != null) {
-          final members = await _supabase.from('family_members')
-              .select('id')
-              .eq('group_id', familyData['group_id']);
-          familyMembers = (members as List).length;
+      // 1. Fetch ALL medications (no is_active filter — filter locally like meds_screen)
+      final response = await _supabase
+          .from('medications')
+          .select()
+          .eq('user_id', userId);
+
+      debugPrint("Dashboard: Fetched ${response.length} active meds from DB.");
+
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+
+      int tempTotal = 0;
+      List<Medicine> todaysMeds = [];
+
+      // 2. Filter locally with foolproof inclusive date check
+      for (var item in response) {
+        final med = Medicine.fromJson(item);
+        final start = DateTime(med.startDate.year, med.startDate.month, med.startDate.day);
+        DateTime end = DateTime(med.endDate.year, med.endDate.month, med.endDate.day);
+        final parsedEndDate = DateTime.tryParse(item['end_date']?.toString() ?? '');
+        if (parsedEndDate != null) {
+          end = DateTime(parsedEndDate.year, parsedEndDate.month, parsedEndDate.day);
         }
 
-        if (mounted) {
-          setState(() {
-            _upcomingMeds = medsData;
-            _latestVital = vitalsData;
-            _totalMedsToday = (allMedsToday as List).length;
-            _takenMedsToday = (allMedsToday).where((m) => m['is_taken'] == true).length;
-            _familyCount = familyMembers;
-            _streakDays = 5; // Placeholder for now
-            _isLoading = false;
-          });
+        // compareTo logic: 0 means same day, >0 means today is after start, <0 means today is before end
+        if (today.compareTo(start) >= 0 && today.compareTo(end) <= 0) {
+          todaysMeds.add(med);
+          tempTotal += med.frequency; // Total doses for today
         }
       }
+
+      debugPrint("Dashboard: ${todaysMeds.length} meds scheduled for exactly today. Total doses: $tempTotal");
+
+      // 3. Fetch taken logs for today safely
+      final startOfDay = DateTime(now.year, now.month, now.day).toUtc().toIso8601String();
+      final endOfDay = DateTime(now.year, now.month, now.day, 23, 59, 59).toUtc().toIso8601String();
+      
+      final logsResponse = await _supabase
+          .from('medicine_logs')
+          .select()
+          .eq('user_id', userId)
+          .inFilter('status', ['taken', 'skipped'])
+          .gte('created_at', startOfDay)
+          .lte('created_at', endOfDay);
+
+      final allLogs = List<Map<String, dynamic>>.from(logsResponse as List);
+      // Taken + skipped dono hide karo Today's Medicines se
+      final hiddenSlotIds = allLogs
+          .where((log) => log['medication_id'] != null && log['alarm_slot'] != null)
+          .map((log) => _slotKey(log['medication_id'].toString(), log['alarm_slot'] as int))
+          .toSet();
+      // Adherence ke liye sirf taken count karo
+      int tempTaken = allLogs.where((log) => log['status'] == 'taken').length;
+
+      // 4. Find Next Medication (Closest upcoming time not taken)
+      Medicine? nextMedication;
+      DateTime? closestTime;
+      String? nextSlotLabel;
+
+      for (var med in todaysMeds) {
+        final activeTimes = med.activeTimes;
+        for (int i = 0; i < activeTimes.length; i++) {
+          final timeStr = activeTimes[i];
+          final slot = i + 1;
+
+          try {
+            final format = DateFormat("hh:mm a");
+            final tod = format.parse(timeStr);
+            final scheduledTime = DateTime(today.year, today.month, today.day, tod.hour, tod.minute);
+
+            // Check if already taken today
+            bool alreadyTaken = allLogs.any((log) =>
+              log['medication_id'] == med.id && log['alarm_slot'] == slot
+            );
+
+            if (!alreadyTaken && scheduledTime.isAfter(now)) {
+              if (closestTime == null || scheduledTime.isBefore(closestTime)) {
+                closestTime = scheduledTime;
+                nextMedication = med;
+                nextSlotLabel = timeStr;
+              }
+            }
+          } catch (e) {
+            debugPrint("Error parsing time for next med: $e");
+          }
+        }
+      }
+
+      // Fetch Latest Vital
+      final vitalsData = await _supabase.from('vitals')
+          .select('*')
+          .eq('user_id', userId)
+          .order('measured_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      // Fetch Family Members
+      final familyData = await _supabase.from('family_members')
+          .select('group_id')
+          .eq('user_id', userId)
+          .maybeSingle();
+      
+      int familyMembers = 0;
+      if (familyData != null) {
+        final members = await _supabase.from('family_members')
+            .select('id')
+            .eq('group_id', familyData['group_id']);
+        familyMembers = (members as List).length;
+      }
+
+      // Calculate streak (single optimized query)
+      final streak = await _calculateStreak(userId);
+
+      // Fetch Profile Name
+      final profileData = await _supabase.from('profiles').select('full_name').eq('id', userId).maybeSingle();
+      if (profileData != null && mounted) setState(() => _fullName = profileData['full_name']);
+
+      if (mounted) {
+        setState(() {
+          _todaysMeds = todaysMeds;
+          _takenSlotIdsToday
+            ..clear()
+            ..addAll(hiddenSlotIds);
+          // Sync skipped from DB so cross-clicked cards survive restart
+          _skippedSlotIds
+            ..clear()
+            ..addAll(allLogs
+                .where((log) =>
+                    log['status'] == 'skipped' &&
+                    log['medication_id'] != null &&
+                    log['alarm_slot'] != null)
+                .map((log) => _slotKey(
+                    log['medication_id'].toString(), log['alarm_slot'] as int)));
+          _latestVital = vitalsData;
+          _totalMedsToday = tempTotal;
+          _takenMedsToday = tempTaken;
+          _familyCount = familyMembers;
+          _streakDays = streak;
+          _isLoading = false;
+          
+          _nextMedData = nextMedication != null ? {
+            'name': nextMedication.name,
+            'dosage': nextMedication.dosage,
+            'image_path': nextMedication.imagePath,
+          } : null;
+          _nextMedTimeLabel = nextSlotLabel;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint("Dashboard Fetch Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Dashboard Error: ${e.toString()}')),
+        );
+        setState(() => _isLoading = false);
+      }
+    } finally {
+      _isRefreshingDashboard = false;
     }
+  }
+
+  Future<int> _calculateStreak(String userId) async {
+    // Fetch last 30 days of logs in ONE query
+    final thirtyDaysAgo = DateTime.now()
+        .subtract(const Duration(days: 30))
+        .toUtc()
+        .toIso8601String();
+
+    final logs = await _supabase
+        .from('medicine_logs')
+        .select('created_at')
+        .eq('user_id', userId)
+        .eq('status', 'taken')
+        .gte('created_at', thirtyDaysAgo)
+        .order('created_at', ascending: false);
+
+    // Extract unique dates
+    final takenDates = (logs as List)
+        .map((log) {
+          final dt = DateTime.parse(log['created_at']).toLocal();
+          return DateTime(dt.year, dt.month, dt.day);
+        })
+        .toSet();
+
+    // Count consecutive days from today backwards
+    int streak = 0;
+    final now = DateTime.now();
+    for (int i = 0; i < 30; i++) {
+      final checkDate = DateTime(now.year, now.month, now.day)
+          .subtract(Duration(days: i)
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          
+          );
+      if (takenDates.contains(checkDate)) {
+        streak++;
+      } else if (i > 0) {
+        break;
+      }
+    }
+    return streak;
   }
 
   String _getGreeting() {
@@ -373,6 +637,22 @@ class _HomeScreenState extends State<HomeScreen> {
         centerTitle: true,
         actions: [
           IconButton(
+            icon: const Icon(LucideIcons.layoutDashboard, color: Color(0xFF0EA5E9)),
+            tooltip: "Health Dashboard",
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const HealthDashboardScreen()),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(LucideIcons.bellRing, color: Color(0xFF0EA5E9)),
+            tooltip: "Alarm Setup",
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const AlarmSetupScreen()),
+            ),
+          ),
+          IconButton(
             icon: const Icon(LucideIcons.settings, color: Colors.grey),
             onPressed: () => Navigator.push(
               context,
@@ -391,6 +671,28 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Builder(
+                      builder: (context) {
+                        final upcoming = _getUpcomingMedsInWindow();
+                        if (upcoming.isEmpty) return const SizedBox.shrink();
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Today\'s Medicines',
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF334155)),
+                            ),
+                            const SizedBox(height: 12),
+                            ...upcoming.map((item) {
+                              return _buildTodayMedicineCard(item);
+                            }),
+                            const SizedBox(height: 25),
+                          ],
+                        );
+                      },
+                    ),
+
                     // Welcome Header
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -456,6 +758,112 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildTodayMedicineCard(Map<String, dynamic> item) {
+    final med = item['medicine'] as Medicine;
+    final imagePath = med.imagePath;
+    final hasImage = imagePath != null && imagePath.isNotEmpty && File(imagePath).existsSync();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey[100]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0EA5E9).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: hasImage
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(
+                      File(imagePath),
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                : const Icon(LucideIcons.pill, color: Color(0xFF0EA5E9), size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  med.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Color(0xFF1E293B),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0EA5E9).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: const Color(0xFF0EA5E9).withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Text(
+                    item['time'] as String,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0EA5E9),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Will ring at scheduled time',
+                onPressed: () => _onSkipWindow(item),
+                icon: const Icon(Icons.cancel, color: Colors.red, size: 30),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.red.withValues(alpha: 0.1),
+                  padding: const EdgeInsets.all(8),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Mark as taken early',
+                onPressed: () => _onEarlyTake(item),
+                icon: const Icon(Icons.check_circle, color: Colors.green, size: 30),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.green.withValues(alpha: 0.1),
+                  padding: const EdgeInsets.all(8),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatChip(String label, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -463,7 +871,7 @@ class _HomeScreenState extends State<HomeScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: Colors.grey[100]!),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Row(
         children: [
@@ -491,7 +899,7 @@ class _HomeScreenState extends State<HomeScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.grey[100]!),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(
         children: [
@@ -507,7 +915,7 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(10),
             child: LinearProgressIndicator(
               value: progress,
-              backgroundColor: const Color(0xFF0EA5E9).withOpacity(0.1),
+              backgroundColor: const Color(0xFF0EA5E9).withValues(alpha: 0.1),
               valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0EA5E9)),
               minHeight: 10,
             ),
@@ -525,7 +933,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildMedicationSummary() {
-    if (_upcomingMeds.isEmpty) {
+    if (_nextMedData == null) {
       return Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
@@ -537,7 +945,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.1), shape: BoxShape.circle),
               child: const Icon(LucideIcons.check, color: Colors.green, size: 24),
             ),
             const SizedBox(width: 16),
@@ -555,7 +963,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final nextMed = _upcomingMeds[0];
     return InkWell(
       onTap: () => widget.onTabChange(1),
       borderRadius: BorderRadius.circular(20),
@@ -564,14 +971,14 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
           border: Border.all(color: Colors.grey[100]!),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.orange.withOpacity(0.1), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), shape: BoxShape.circle),
               child: const Icon(LucideIcons.pill, color: Colors.orange, size: 24),
             ),
             const SizedBox(width: 16),
@@ -579,17 +986,17 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(nextMed['name'] ?? 'Unknown', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+                  Text(_nextMedData!['name'] ?? 'Unknown', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
                   const SizedBox(height: 4),
                   Row(
                     children: [
                       const Icon(LucideIcons.clock, size: 14, color: Colors.grey),
                       const SizedBox(width: 4),
-                      Text(nextMed['time'] ?? '--:--', style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)),
+                      Text(_nextMedTimeLabel ?? '--:--', style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)),
                       const SizedBox(width: 12),
                       const Icon(LucideIcons.scale, size: 14, color: Colors.grey),
                       const SizedBox(width: 4),
-                      Text(nextMed['dosage'] ?? '-', style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)),
+                      Text(_nextMedData!['dosage'] ?? '-', style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)),
                     ],
                   ),
                 ],
@@ -655,14 +1062,14 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
           border: Border.all(color: Colors.grey[100]!),
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: iconColor.withOpacity(0.1), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: iconColor.withValues(alpha: 0.1), shape: BoxShape.circle),
               child: Icon(mainIcon, color: iconColor, size: 24),
             ),
             const SizedBox(width: 16),
@@ -692,7 +1099,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Icon(icon, color: color, size: 26),
@@ -701,147 +1108,6 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 8),
         Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF475569))),
       ],
-    );
-  }
-}
-
-// ==========================================
-// 3. ALARM OVERLAY (The Popup Screen)
-// ==========================================
-class AlarmOverlay extends StatelessWidget {
-  final Map<String, dynamic> medicine;
-  final AudioPlayer player;
-  final VoidCallback onActionTaken;
-  final VoidCallback onRemindLater;
-
-  const AlarmOverlay({
-    super.key, 
-    required this.medicine, 
-    required this.player, 
-    required this.onActionTaken,
-    required this.onRemindLater,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final imagePath = medicine['image_path'] as String?;
-    final medId = medicine['id']?.toString() ?? '';
-
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF0D1117), Color(0xFF1A2332)],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const SizedBox(height: 40),
-              Container(
-                width: 150,
-                height: 150,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.1),
-                  border: Border.all(color: Colors.white.withOpacity(0.2)),
-                ),
-                child: ClipOval(
-                  child: imagePath != null && File(imagePath).existsSync()
-                      ? Image.file(File(imagePath), width: 150, height: 150, fit: BoxFit.cover)
-                      : const Icon(LucideIcons.pill, size: 80, color: Colors.white70),
-                ),
-              ),
-              const SizedBox(height: 30),
-              const Icon(LucideIcons.bellRing, size: 50, color: Colors.white),
-              const SizedBox(height: 20),
-              const Text("TIME FOR MEDICINE", style: TextStyle(color: Colors.white70, fontSize: 14, letterSpacing: 2)),
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  medicine['name'] ?? "Unknown",
-                  style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  "Dosage: ${medicine['dosage'] ?? '1 dose'}",
-                  style: const TextStyle(color: Colors.white, fontSize: 16),
-                ),
-              ),
-              const Spacer(),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 30),
-                child: Column(
-                  children: [
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white, 
-                        minimumSize: const Size(double.infinity, 60), 
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      ),
-                      onPressed: () async {
-                        try {
-                          await Supabase.instance.client.from('medications').update({'is_taken': true}).eq('id', medId);
-                          await HistoryService.logAction(actionType: 'MED', description: 'Took ${medicine['name']}');
-                        } catch (e) {
-                          debugPrint('Error marking as taken: $e');
-                        }
-                        await player.stop();
-                        if (context.mounted) Navigator.pop(context);
-                        onActionTaken();
-                      },
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(LucideIcons.checkCircle, size: 24),
-                          SizedBox(width: 10),
-                          Text("I TOOK IT", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        foregroundColor: Colors.white, 
-                        minimumSize: const Size(double.infinity, 60), 
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      ),
-                      onPressed: () async {
-                        await player.stop();
-                        if (context.mounted) Navigator.pop(context);
-                        onRemindLater();
-                      },
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(LucideIcons.clock, size: 24),
-                          SizedBox(width: 10),
-                          Text("REMIND ME LATER", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 50),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

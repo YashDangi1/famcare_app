@@ -44,7 +44,13 @@ class _LoginScreenState extends State<LoginScreen> {
       if (_isSigningIn) {
         // Login Logic
         await supabase.auth.signInWithPassword(email: email, password: password);
-        // AuthCheck in main.dart will handle navigation on success
+
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const MainAppShell()),
+            (Route<dynamic> route) => false,
+          );
+        }
       } else {
         // Sign Up Logic
         final response = await supabase.auth.signUp(email: email, password: password);
