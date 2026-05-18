@@ -13,6 +13,7 @@ import 'models/medicine_model.dart';
 import 'screens/alarm_setup_screen.dart';
 import 'family_hub_screen.dart';
 import 'screens/vitals_screen.dart';
+import 'main.dart' show medicineUpdatedNotifier;
 import 'meds_screen.dart';
 import 'vault_screen.dart';
 import 'settings_screen.dart';
@@ -215,12 +216,23 @@ class _HomeScreenState extends State<HomeScreen> {
         _initDashboard();
       }
     });
+    // Refresh Due Soon panel when medicine alarm time is edited
+    medicineUpdatedNotifier.addListener(_onMedicineUpdated);
+  }
+
+  void _onMedicineUpdated() async {
+    if (mounted) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      _isRefreshingDashboard = false; // Reset guard so refresh isn't skipped
+      _initDashboard();
+    }
   }
 
   @override
   void dispose() {
     _minuteTimer?.cancel();
     _medsSubscription?.cancel();
+    medicineUpdatedNotifier.removeListener(_onMedicineUpdated);
     super.dispose();
   }
 
@@ -263,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final difference = scheduledDateTime.difference(now).inMinutes;
             final slotKey = _slotKey(med.id ?? '', slot);
 
-            if (difference >= -30 &&
+            if (difference >= -15 &&
                 difference <= 30 &&
                 !_takenSlotIdsToday.contains(slotKey) &&
                 !_skippedSlotIds.contains(slotKey)) {
@@ -289,6 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _getDueSoonMeds() {
     List<Map<String, dynamic>> dueSoon = [];
     final now = DateTime.now();
+    debugPrint('DueSoon: Checking ${_todaysMeds.length} meds, takenSlots=${_takenSlotIdsToday.length}, skippedSlots=${_skippedSlotIds.length}');
 
     for (var med in _todaysMeds) {
       final times = [med.time1, med.time2, med.time3];
@@ -304,12 +317,13 @@ class _HomeScreenState extends State<HomeScreen> {
               now.day,
               parsedTime.hour,
               parsedTime.minute,
-            );
+            ).toLocal();
 
             final difference = scheduledDateTime.difference(now).inMinutes;
             final slotKey = _slotKey(med.id ?? '', slot);
+            debugPrint('DueSoon: ${med.name} slot$slot time=$timeStr parsed=$scheduledDateTime now=$now diff=${difference}min key=$slotKey taken=${_takenSlotIdsToday.contains(slotKey)} skipped=${_skippedSlotIds.contains(slotKey)}');
 
-            if (difference >= -30 &&
+            if (difference >= -15 &&
                 difference <= 30 &&
                 !_takenSlotIdsToday.contains(slotKey) &&
                 !_skippedSlotIds.contains(slotKey)) {
@@ -321,11 +335,12 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             }
           } catch (e) {
-            debugPrint('Time parse error: $e');
+            debugPrint('DueSoon parse error: $e');
           }
         }
       }
     }
+    debugPrint('DueSoon: Found ${dueSoon.length} items');
     dueSoon.sort(
       (a, b) => (a['dateTime'] as DateTime).compareTo(b['dateTime'] as DateTime),
     );

@@ -62,6 +62,16 @@ class _VitalsInputSheetState extends State<VitalsInputSheet> {
       final weight = double.tryParse(_clean(_weightController.text));
       final temp = double.tryParse(_clean(_tempController.text));
 
+      // BP range validation
+      if (systolic != null && (systolic < 60 || systolic > 250)) {
+        AppSnackBar.showError(context, "Systolic BP must be between 60-250 mmHg");
+        return;
+      }
+      if (diastolic != null && (diastolic < 40 || diastolic > 150)) {
+        AppSnackBar.showError(context, "Diastolic BP must be between 40-150 mmHg");
+        return;
+      }
+
       debugPrint("Saving Vitals: BP $systolic/$diastolic, HR $heartRate, SpO2 $spo2, Wt $weight, Temp $temp");
 
       await _vitalsService.saveVitals(

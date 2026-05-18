@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:alarm/alarm.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_fgbg/flutter_fgbg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,9 +19,15 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // Guard against double-calling (early listener + AlarmService listener both fire)
 final Set<int> _handledAlarmIds = {};
 
+// BUG 2: Guard against double-execution of notification action handlers
+final Set<int> _handledNotificationActionIds = {};
+
 // Global alarm state — when set, app shows ONLY the AlarmScreen (no home/nav)
 // Value is the alarm ID. Null = show normal app.
 final ValueNotifier<int?> activeAlarmIdNotifier = ValueNotifier(null);
+
+// Notifier for Due Soon panel refresh when medicine alarm time is edited
+final ValueNotifier<int> medicineUpdatedNotifier = ValueNotifier(0);
 
 @pragma('vm:entry-point')
 // Called when alarm rings (app running OR woken up from killed state)
@@ -105,8 +112,33 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
     final isFullScreen = prefs.getBool('alarm_style_fullscreen') ?? true;
 
     if (!isFullScreen) {
-      // Notification only mode — alarm sound already playing from native side
-      debugPrint("Alarm style: Notification only — skipping AlarmScreen");
+      // Notification only mode — replace alarm package notification with ours
+      // Same notification ID = Android replaces native notification with our action buttons
+      debugPrint("Alarm style: Notification only — replacing with action notification");
+
+      await AlarmService().showActionNotification(
+        alarmId: settings.id,
+        medicineName: med['name'] ?? 'Medicine',
+        dosage: med['dosage'] ?? '1 dose',
+        scheduledTime: settings.dateTime,
+      );
+
+      // BUG 7: Auto-stop sound after 30 min if no action taken
+      final autoStopId = settings.id;
+      Timer(const Duration(minutes: 30), () async {
+        if (_handledNotificationActionIds.contains(autoStopId)) return;
+        try {
+          final activeAlarms = await Alarm.getAlarms();
+          final stillRinging = activeAlarms.any((a) => a.id == autoStopId);
+          if (stillRinging) {
+            await Alarm.stop(autoStopId);
+            await _logAsMissed(autoStopId);
+          }
+        } catch (e) {
+          debugPrint("Auto-stop error: $e");
+        }
+      });
+
       return;
     }
 
@@ -143,22 +175,265 @@ Future<void> handleAlarmRingById(int alarmId) async {
     return;
   }
   _handledAlarmIds.add(alarmId);
+
+  // Check preference — don't open AlarmScreen in notification-only mode
+  final prefs = await SharedPreferences.getInstance();
+  final isFullScreen = prefs.getBool('alarm_style_fullscreen') ?? true;
+  if (!isFullScreen) {
+    debugPrint("handleAlarmRingById: notification-only mode — not opening AlarmScreen for ID=$alarmId");
+    return;
+  }
+
   debugPrint("handleAlarmRingById: ID=$alarmId — activating full-screen mode");
 
-  // Ensure Supabase is ready
+  // BUG 4: Wait for Supabase using _supabaseReady bool
   int supabaseAttempts = 0;
-  while (supabaseAttempts < 10) {
-    try {
-      Supabase.instance.client;
-      break;
-    } catch (_) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      supabaseAttempts++;
-    }
+  while (!_supabaseReady && supabaseAttempts < 20) {
+    await Future.delayed(const Duration(milliseconds: 300));
+    supabaseAttempts++;
   }
 
   // Set the global notifier — triggers MyApp rebuild with AlarmScreen only
   activeAlarmIdNotifier.value = alarmId;
+}
+
+// Handle notification action button taps (background — no UI)
+// @pragma required for flutter_local_notifications background callback
+@pragma('vm:entry-point')
+void _onNotificationResponse(NotificationResponse response) async {
+  final actionId = response.actionId ?? '';
+  debugPrint("=== NOTIFICATION RESPONSE === actionId: $actionId, payload: ${response.payload}");
+
+  if (actionId.startsWith('took_it_')) {
+    final alarmId = int.tryParse(actionId.replaceFirst('took_it_', ''));
+    if (alarmId != null) await _handleNotificationTookIt(alarmId);
+  } else if (actionId.startsWith('take_later_')) {
+    final alarmId = int.tryParse(actionId.replaceFirst('take_later_', ''));
+    if (alarmId != null) await _handleNotificationTakeLater(alarmId);
+  }
+}
+
+Future<void> _handleNotificationTookIt(int alarmId) async {
+  // BUG 2: Double-execution guard
+  if (_handledNotificationActionIds.contains(alarmId)) return;
+  _handledNotificationActionIds.add(alarmId);
+  Future.delayed(const Duration(minutes: 1), () => _handledNotificationActionIds.remove(alarmId));
+
+  try {
+    await Alarm.stop(alarmId);
+    await AlarmService().notificationsPlugin.cancel(alarmId); // Cancel native notification
+
+    // BUG 4: Wait for Supabase using _supabaseReady bool
+    int attempts = 0;
+    while (!_supabaseReady && attempts < 20) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      attempts++;
+    }
+    if (!_supabaseReady) {
+      debugPrint('Supabase not ready after timeout — cannot log took_it');
+      return;
+    }
+
+    final supabase = Supabase.instance.client;
+
+    // BUG 5: Explicit userId null check with early return
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      debugPrint('userId null — cannot log took_it');
+      return;
+    }
+
+    // Find medication by alarm ID
+    final isSnooze = alarmId > 10000;
+    final originalId = isSnooze ? alarmId - 10000 : alarmId;
+
+    Map<String, dynamic>? med;
+    med = await supabase.from('medications').select('*').eq('alarm_id1', originalId).maybeSingle().timeout(const Duration(seconds: 5));
+    if (med == null) med = await supabase.from('medications').select('*').eq('alarm_id2', originalId).maybeSingle().timeout(const Duration(seconds: 5));
+    if (med == null) med = await supabase.from('medications').select('*').eq('alarm_id3', originalId).maybeSingle().timeout(const Duration(seconds: 5));
+
+    if (med == null) return;
+
+    final medId = med['id'];
+    if (medId == null || medId.toString().isEmpty) return;
+
+    // Decrement qty
+    final currentQty = int.tryParse(med['qty']?.toString() ?? '0') ?? 0;
+    final newQty = (currentQty - 1).clamp(0, 99999);
+    await supabase.from('medications').update({'qty': newQty}).eq('id', medId);
+
+    if (newQty == 0) {
+      await supabase.from('medications').update({'is_active': false}).eq('id', medId);
+    }
+
+    // Determine slot
+    int slot = 1;
+    if (med['alarm_id2'] == originalId) slot = 2;
+    if (med['alarm_id3'] == originalId) slot = 3;
+
+    // Read original scheduled time from cache
+    final prefs = await SharedPreferences.getInstance();
+    final scheduledStr = prefs.getString('alarm_scheduled_time_$alarmId');
+    final scheduledTime = scheduledStr != null
+        ? DateTime.parse(scheduledStr)
+        : DateTime.now();
+
+    // Log as taken
+    await supabase.from('medicine_logs').insert({
+      'user_id': userId,
+      'medication_id': medId,
+      'medicine_name': med['name'] ?? 'Medicine',
+      'dosage': med['dosage'] ?? '1 dose',
+      'status': 'taken',
+      'alarm_slot': slot,
+      'scheduled_time': scheduledTime.toIso8601String(),
+      'created_at': DateTime.now().toIso8601String(),
+    });
+
+    // Clean up cache
+    try {
+      await prefs.remove('cached_med_$alarmId');
+      await prefs.remove('alarm_scheduled_time_$alarmId');
+    } catch (_) {}
+
+    debugPrint("Notification 'I Took It' handled for alarm $alarmId");
+  } catch (e) {
+    debugPrint("Error handling notification took_it: $e");
+  }
+}
+
+Future<void> _handleNotificationTakeLater(int alarmId) async {
+  // BUG 2: Double-execution guard
+  if (_handledNotificationActionIds.contains(alarmId)) return;
+  _handledNotificationActionIds.add(alarmId);
+  Future.delayed(const Duration(minutes: 1), () => _handledNotificationActionIds.remove(alarmId));
+
+  try {
+    await Alarm.stop(alarmId);
+    await AlarmService().notificationsPlugin.cancel(alarmId); // Cancel native notification
+
+    // BUG 4: Wait for Supabase using _supabaseReady bool
+    int attempts = 0;
+    while (!_supabaseReady && attempts < 20) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      attempts++;
+    }
+    if (!_supabaseReady) {
+      debugPrint('Supabase not ready after timeout — cannot log take_later');
+      return;
+    }
+
+    final supabase = Supabase.instance.client;
+
+    // BUG 5: Explicit userId null check with early return
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      debugPrint('userId null — cannot log take_later');
+      return;
+    }
+
+    // Find medication by alarm ID
+    final isSnooze = alarmId > 10000;
+    final originalId = isSnooze ? alarmId - 10000 : alarmId;
+
+    Map<String, dynamic>? med;
+    med = await supabase.from('medications').select('*').eq('alarm_id1', originalId).maybeSingle().timeout(const Duration(seconds: 5));
+    if (med == null) med = await supabase.from('medications').select('*').eq('alarm_id2', originalId).maybeSingle().timeout(const Duration(seconds: 5));
+    if (med == null) med = await supabase.from('medications').select('*').eq('alarm_id3', originalId).maybeSingle().timeout(const Duration(seconds: 5));
+
+    String medicineName = 'Medicine';
+    String dosage = '1 dose';
+    String medId = '';
+    int slot = 1;
+
+    if (med != null) {
+      medicineName = med['name'] ?? 'Medicine';
+      dosage = med['dosage'] ?? '1 dose';
+      medId = med['id'] ?? '';
+      if (med['alarm_id2'] == originalId) slot = 2;
+      if (med['alarm_id3'] == originalId) slot = 3;
+    }
+
+    // BUG 3: Schedule snooze from ORIGINAL scheduled time, not DateTime.now()
+    final prefs = await SharedPreferences.getInstance();
+    final scheduledStr = prefs.getString('alarm_scheduled_time_$alarmId');
+    final scheduledTime = scheduledStr != null
+        ? DateTime.parse(scheduledStr)
+        : DateTime.now();
+
+    await AlarmService().scheduleSnoozeAlarm(
+      originalId: originalId,
+      medicineName: medicineName,
+      originalTime: scheduledTime,
+    );
+
+    // Log as snoozed
+    if (userId != null && medId.isNotEmpty) {
+      await supabase.from('medicine_logs').insert({
+        'user_id': userId,
+        'medication_id': medId,
+        'medicine_name': medicineName,
+        'dosage': dosage,
+        'status': 'snoozed',
+        'alarm_slot': slot,
+        'scheduled_time': DateTime.now().toIso8601String(),
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
+
+    // Clean up cache
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('cached_med_$alarmId');
+      await prefs.remove('alarm_scheduled_time_$alarmId');
+    } catch (_) {}
+
+    debugPrint("Notification 'Take Later' handled for alarm $alarmId");
+  } catch (e) {
+    debugPrint("Error handling notification take_later: $e");
+  }
+}
+
+/// BUG 7: Log alarm as missed when auto-stop timer fires (no action taken)
+Future<void> _logAsMissed(int alarmId) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString('cached_med_$alarmId');
+    if (cached == null) return;
+
+    final data = jsonDecode(cached) as Map<String, dynamic>;
+
+    // Wait for Supabase
+    int attempts = 0;
+    while (!_supabaseReady && attempts < 20) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      attempts++;
+    }
+    if (!_supabaseReady) return;
+
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    await supabase.from('medicine_logs').insert({
+      'user_id': userId,
+      'medication_id': data['id'] ?? '',
+      'medicine_name': data['name'] ?? 'Medicine',
+      'dosage': data['dosage'] ?? '1 dose',
+      'status': 'missed',
+      'alarm_slot': int.tryParse(data['slot']?.toString() ?? '1') ?? 1,
+      'scheduled_time': DateTime.now().toIso8601String(),
+      'created_at': DateTime.now().toIso8601String(),
+    });
+
+    // Clean up
+    await prefs.remove('cached_med_$alarmId');
+    await prefs.remove('alarm_scheduled_time_$alarmId');
+
+    debugPrint("Auto-stop: logged as missed for alarm $alarmId");
+  } catch (e) {
+    debugPrint("Error logging missed dose: $e");
+  }
 }
 
 // Buffer for alarm events received before Supabase is ready
@@ -177,10 +452,15 @@ void main() async {
     final prefs = await SharedPreferences.getInstance();
     final storedAlarmId = prefs.getInt('ringing_alarm_id');
     if (storedAlarmId != null && storedAlarmId != -1) {
-      debugPrint("ALARM MODE: Found stored alarm ID=$storedAlarmId");
-      activeAlarmIdNotifier.value = storedAlarmId;
+      final isFullScreen = prefs.getBool('alarm_style_fullscreen') ?? true;
+      if (isFullScreen) {
+        debugPrint("ALARM MODE: Found stored alarm ID=$storedAlarmId");
+        activeAlarmIdNotifier.value = storedAlarmId;
+        alarmMode = true;
+      } else {
+        debugPrint("ALARM MODE: Notification-only — skipping stored alarm ID=$storedAlarmId");
+      }
       prefs.remove('ringing_alarm_id');
-      alarmMode = true;
     }
   } catch (e) {
     debugPrint("Error checking stored alarm ID: $e");
@@ -219,6 +499,15 @@ void main() async {
 
     await Alarm.init();
     await AlarmService().init();
+
+    // Re-register notification callback directly (must be top-level @pragma function)
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = InitializationSettings(android: androidSettings);
+    await AlarmService().notificationsPlugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse: _onNotificationResponse,
+    );
 
     // Foreground listener — check for stored alarm when app resumes
     FGBGEvents.instance.stream.listen((event) async {

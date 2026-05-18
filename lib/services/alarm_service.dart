@@ -25,11 +25,8 @@ class AlarmService {
     // Request permissions
     await _requestPermissions();
 
-    // Init local notifications for non-alarm use
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const settings = InitializationSettings(android: androidSettings);
-    await notificationsPlugin.initialize(settings);
+    // Note: notificationsPlugin.initialize() is called in main.dart
+    // with the action button callback — don't initialize here
 
     // Log active alarms
     final alarms = await Alarm.getAlarms();
@@ -76,8 +73,8 @@ class AlarmService {
       ),
       notificationSettings: NotificationSettings(
         title: medicineName,
-        body: 'Time for your $dosage dose!',
-        stopButton: 'Dismiss',
+        body: dosage,
+        stopButton: null,  // Removes Dismiss button completely
       ),
       warningNotificationOnKill: true,
       androidFullScreenIntent: true,
@@ -147,8 +144,8 @@ class AlarmService {
         ),
         notificationSettings: NotificationSettings(
           title: '$medicineName (Snooze)',
-          body: 'Reminder: Time for your medication',
-          stopButton: 'Dismiss',
+          body: 'Time for your medication',
+          stopButton: null,  // Removes Dismiss button completely
         ),
         warningNotificationOnKill: true,
         androidFullScreenIntent: true,
@@ -196,6 +193,56 @@ class AlarmService {
           enableVibration: true,
         ),
       ),
+    );
+  }
+
+  /// Show notification with action buttons for notification-only mode
+  Future<void> showActionNotification({
+    required int alarmId,
+    required String medicineName,
+    required String dosage,
+    required DateTime scheduledTime,
+  }) async {
+    // Store scheduledTime for snooze calculation (read back in _handleNotificationTakeLater)
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('alarm_scheduled_time_$alarmId', scheduledTime.toIso8601String());
+    } catch (_) {}
+    final androidDetails = AndroidNotificationDetails(
+      'alarm_actions_channel',
+      'Alarm Actions',
+      channelDescription: 'Medicine alarm with action buttons',
+      importance: Importance.max,
+      priority: Priority.max,
+      fullScreenIntent: false,
+      ongoing: true,
+      autoCancel: false,
+      category: AndroidNotificationCategory.alarm,
+      visibility: NotificationVisibility.public,
+      playSound: false, // alarm sound already playing from native side
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction(
+          'took_it_$alarmId',
+          'I Took It',
+          cancelNotification: true,
+        ),
+        AndroidNotificationAction(
+          'take_later_$alarmId',
+          'Take Later',
+          cancelNotification: true,
+        ),
+      ],
+    );
+
+    final details = NotificationDetails(android: androidDetails);
+
+    // Use SAME ID as alarm package — our notification replaces theirs
+    await notificationsPlugin.show(
+      alarmId,
+      'Medicine Reminder',
+      '$medicineName — $dosage',
+      details,
+      payload: 'alarm_action_$alarmId',
     );
   }
 }

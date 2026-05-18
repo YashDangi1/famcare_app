@@ -13,6 +13,7 @@ import 'models/medicine_model.dart';
 import 'screens/alarm_setup_screen.dart';
 import 'screens/medicine_log_screen.dart';
 import 'utils/snackbar_utils.dart';
+import 'main.dart' show medicineUpdatedNotifier;
 import 'services/activity_service.dart';
 
 class MedsScreen extends StatefulWidget {
@@ -401,6 +402,8 @@ class _MedsScreenState extends State<MedsScreen> {
         }
         _fetchMedications();
         AppSnackBar.showSuccess(context, "Medicine saved successfully!");
+        // Notify home screen to refresh Due Soon panel
+        medicineUpdatedNotifier.value++;
       }
     } catch (e) {
       debugPrint("Save Error: $e");
