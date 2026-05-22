@@ -69,51 +69,68 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
     final isSnooze = settings.id > 10000;
     final originalId = isSnooze ? settings.id - 10000 : settings.id;
 
-    Map<String, dynamic>? response;
-
-    // Try alarm_id1
-    response = await supabase
-        .from('medications')
-        .select('*')
-        .eq('alarm_id1', originalId)
-        .maybeSingle()
-        .timeout(const Duration(seconds: 5));
-
-    // Try alarm_id2 if not found
-    if (response == null) {
-      response = await supabase
-          .from('medications')
-          .select('*')
-          .eq('alarm_id2', originalId)
-          .maybeSingle()
-          .timeout(const Duration(seconds: 5));
-    }
-
-    // Try alarm_id3 if not found
-    if (response == null) {
-      response = await supabase
-          .from('medications')
-          .select('*')
-          .eq('alarm_id3', originalId)
-          .maybeSingle()
-          .timeout(const Duration(seconds: 5));
-    }
-
-    if (response == null) {
-      debugPrint("No medication found for ID ${settings.id} - stopping");
-      await Alarm.stop(settings.id);
-      return;
-    }
-
-    final med = response!;
-
     // Check alarm style preference
     final prefs = await SharedPreferences.getInstance();
     final isFullScreen = prefs.getBool('alarm_style_fullscreen') ?? true;
 
+    // === CACHE-FIRST lookup (supports slot-based retry alarms) ===
+    Map<String, dynamic>? med;
+    int slot = 1;
+
+    final cached = prefs.getString('cached_med_$originalId');
+    if (cached != null) {
+      try {
+        final cacheData = jsonDecode(cached) as Map<String, dynamic>;
+        med = cacheData;
+        slot = int.tryParse(cacheData['slot_index']?.toString() ?? cacheData['slot']?.toString() ?? '1') ?? 1;
+        debugPrint("handleAlarmRing: Cache HIT for ID=$originalId — ${med['name']} slot=$slot");
+      } catch (e) {
+        debugPrint("handleAlarmRing: Cache parse error: $e");
+      }
+    }
+
+    // === FALLBACK: DB lookup by alarm_id1/2/3 ===
+    if (med == null) {
+      debugPrint("handleAlarmRing: Cache MISS for ID=$originalId — trying DB lookup");
+
+      Map<String, dynamic>? response;
+      response = await supabase
+          .from('medications')
+          .select('*')
+          .eq('alarm_id1', originalId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+
+      if (response == null) {
+        response = await supabase
+            .from('medications')
+            .select('*')
+            .eq('alarm_id2', originalId)
+            .maybeSingle()
+            .timeout(const Duration(seconds: 5));
+      }
+
+      if (response == null) {
+        response = await supabase
+            .from('medications')
+            .select('*')
+            .eq('alarm_id3', originalId)
+            .maybeSingle()
+            .timeout(const Duration(seconds: 5));
+      }
+
+      if (response == null) {
+        debugPrint("No medication found for ID ${settings.id} — stopping");
+        await Alarm.stop(settings.id);
+        return;
+      }
+
+      med = response;
+      if (med['alarm_id2'] == originalId) slot = 2;
+      if (med['alarm_id3'] == originalId) slot = 3;
+    }
+
     if (!isFullScreen) {
-      // Notification only mode — replace alarm package notification with ours
-      // Same notification ID = Android replaces native notification with our action buttons
       debugPrint("Alarm style: Notification only — replacing with action notification");
 
       await AlarmService().showActionNotification(
@@ -123,7 +140,6 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
         scheduledTime: settings.dateTime,
       );
 
-      // BUG 7: Auto-stop sound after 30 min if no action taken
       final autoStopId = settings.id;
       Timer(const Duration(minutes: 30), () async {
         if (_handledNotificationActionIds.contains(autoStopId)) return;
@@ -142,26 +158,22 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
       return;
     }
 
-    int slot = 1;
-    if (med['alarm_id2'] == originalId) slot = 2;
-    if (med['alarm_id3'] == originalId) slot = 3;
-
     navigatorKey.currentState!.push(
       MaterialPageRoute(
         builder: (_) => AlarmScreen(
           alarmId: settings.id,
           isSnooze: isSnooze,
-          medicineName: med['name'] ?? 'Medicine',
+          medicineName: med!['name'] ?? 'Medicine',
           dosage: med['dosage'] ?? '1 dose',
           qty: int.tryParse(med['qty']?.toString() ?? '0') ?? 0,
-          medicationId: med['id'] ?? '',
+          medicationId: med['id']?.toString() ?? '',
           alarmSlot: slot,
           scheduledTime: settings.dateTime,
           imagePath: med['image_path'],
         ),
       ),
     );
-    debugPrint("AlarmScreen pushed for '${med['name']}'");
+    debugPrint("AlarmScreen pushed for '${med['name']}' slot=$slot");
   } catch (e) {
     debugPrint("Error in handleAlarmRing: $e");
   }
@@ -759,7 +771,6 @@ class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
     }
 
     final isSnooze = widget.alarmId > 10000;
-    final originalId = isSnooze ? widget.alarmId - 10000 : widget.alarmId;
     final slot = (_med!['slot'] as int?) ?? 1;
 
     return Navigator(

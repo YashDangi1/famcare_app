@@ -1,3 +1,5 @@
+import 'package:intl/intl.dart';
+
 class Medicine {
   final String? id;
   final String? userId;
@@ -19,6 +21,16 @@ class Medicine {
   final String? imagePath;
   final DateTime? createdAt;
 
+  // New fields — scheduling & metadata
+  final List<String> slotTypes;     // ['morning', 'evening'] etc.
+  final List<String> customTimes;   // For custom slot: ['09:15 AM', '03:30 PM']
+  final String scheduleType;        // 'daily' | 'every_x_days' | 'specific_dates'
+  final int everyXDays;             // Default 1
+  final List<String> specificDates; // ['2026-05-20', '2026-05-22']
+  final String notes;               // Doctor instructions
+  final bool isPaused;
+  final bool lowStockAlerted;              // Pause feature
+
   Medicine({
     this.id,
     this.userId,
@@ -39,6 +51,14 @@ class Medicine {
     this.isTaken = false,
     this.imagePath,
     this.createdAt,
+    this.slotTypes = const [],
+    this.customTimes = const [],
+    this.scheduleType = 'daily',
+    this.everyXDays = 1,
+    this.specificDates = const [],
+    this.notes = '',
+    this.isPaused = false,
+    this.lowStockAlerted = false,
   });
 
   // startDate + durationDays - 1
@@ -86,9 +106,17 @@ class Medicine {
         isActive: json['is_active'] == true || json['is_active'] == 1 || json['is_active']?.toString() == 'true',
         isTaken: json['is_taken'] == true || json['is_taken']?.toString() == 'true',
         imagePath: json['image_path']?.toString(),
-        createdAt: json['created_at'] != null 
-            ? DateTime.tryParse(json['created_at'].toString()) 
+        createdAt: json['created_at'] != null
+            ? DateTime.tryParse(json['created_at'].toString())
             : null,
+        slotTypes: List<String>.from(json['slot_types'] ?? []),
+        customTimes: List<String>.from(json['custom_times'] ?? []),
+        scheduleType: json['schedule_type']?.toString() ?? 'daily',
+        everyXDays: int.tryParse(json['every_x_days']?.toString() ?? '1') ?? 1,
+        specificDates: List<String>.from(json['specific_dates'] ?? []),
+        notes: json['notes']?.toString() ?? '',
+        isPaused: json['is_paused'] == true || json['is_paused'] == 1,
+        lowStockAlerted: json['low_stock_alerted'] == true || json['low_stock_alerted'] == 1,
       );
     } catch (e) {
       print("Medicine parsing error: $e");
@@ -128,6 +156,45 @@ class Medicine {
       'is_taken': isTaken,
       'image_path': imagePath,
       if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
+      'slot_types': slotTypes,
+      'custom_times': customTimes,
+      'schedule_type': scheduleType,
+      'every_x_days': everyXDays,
+      'specific_dates': specificDates,
+      'notes': notes,
+      'is_paused': isPaused,
+      'low_stock_alerted': lowStockAlerted,
     };
+  }
+
+  /// Returns true if medicine should be active on given date
+  bool isActiveOnDate(DateTime date) {
+    if (isPaused) return false;
+    if (scheduleType == 'specific_dates') {
+      final dateStr = DateFormat('yyyy-MM-dd').format(date);
+      return specificDates.contains(dateStr);
+    }
+    if (scheduleType == 'every_x_days') {
+      final daysDiff = date.difference(startDate).inDays;
+      return daysDiff >= 0 && daysDiff % everyXDays == 0;
+    }
+    return true; // daily
+  }
+
+  /// Returns alarm times for a given slot type using preferences
+  List<String> getAlarmTimesForSlot(String slot, Map<String, dynamic> prefs) {
+    if (slot == 'custom') return customTimes;
+    final key = '${slot}_start';
+    return [prefs[key] ?? _defaultSlotStart(slot)];
+  }
+
+  static String _defaultSlotStart(String slot) {
+    switch (slot) {
+      case 'morning': return '08:00 AM';
+      case 'afternoon': return '12:00 PM';
+      case 'evening': return '04:00 PM';
+      case 'night': return '09:00 PM';
+      default: return '08:00 AM';
+    }
   }
 }

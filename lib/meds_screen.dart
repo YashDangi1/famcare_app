@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -7,8 +6,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:intl/intl.dart';
 import 'package:alarm/alarm.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'services/alarm_service.dart';
+import 'services/slot_preferences_service.dart';
 import 'models/medicine_model.dart';
 import 'screens/alarm_setup_screen.dart';
 import 'screens/medicine_log_screen.dart';
@@ -32,6 +31,10 @@ class _MedsScreenState extends State<MedsScreen> {
   List<Medicine> _medications = [];
   bool _isLoading = true;
   String? _expandedMedId;
+
+  // Slot-based grouping
+  Map<String, dynamic> _slotPrefs = {};
+  final Set<String> _expandedSlots = {'morning', 'afternoon', 'evening', 'night', 'custom'};
 
   @override
   void initState() {
@@ -62,9 +65,13 @@ class _MedsScreenState extends State<MedsScreen> {
 
       print("Fetched ${data.length} medications");
 
+      // Load slot preferences for card headers
+      final slotPrefs = await SlotPreferencesService().getPreferences();
+
       if (mounted) {
         setState(() {
           _medications = (data as List).map((m) => Medicine.fromJson(m)).toList();
+          _slotPrefs = slotPrefs;
           // Cache image existence to avoid sync I/O in build()
           _existingImagePaths.clear();
           for (final m in _medications) {
@@ -82,24 +89,55 @@ class _MedsScreenState extends State<MedsScreen> {
   }
 
   // ==========================================
-  // ➕ ADD/EDIT MEDICINE DIALOG
+  // ➕ ADD/EDIT MEDICINE DIALOG (Redesigned)
   // ==========================================
   void _showAddEditDialog({Medicine? existingMed}) {
     final nameController = TextEditingController(text: existingMed?.name);
     final dosageController = TextEditingController(text: existingMed?.dosage ?? "1 tablet");
     final durationController = TextEditingController(text: (existingMed?.durationDays ?? 7).toString());
     final qtyController = TextEditingController(text: (existingMed?.qty ?? 7).toString());
-    
-    int frequency = existingMed?.frequency ?? 1;
+    final notesController = TextEditingController(text: existingMed?.notes ?? '');
+    final everyXDaysController = TextEditingController(text: (existingMed?.everyXDays ?? 1).toString());
+
+    // 4A — Slot selector state
+    List<String> selectedSlots = List.from(existingMed?.slotTypes ?? []);
+    if (selectedSlots.isEmpty && existingMed != null) {
+      // Migration: infer from old frequency
+      if (existingMed.frequency >= 1) selectedSlots.add('morning');
+      if (existingMed.frequency >= 2) selectedSlots.add('afternoon');
+      if (existingMed.frequency >= 3) selectedSlots.add('night');
+    }
+
+    // 4B — Custom times state
+    List<TimeOfDay> customAlarmTimes = (existingMed?.customTimes ?? [])
+        .map((t) => _parseTime(t))
+        .whereType<TimeOfDay>()
+        .toList();
+
+    // 4C — Schedule type state
+    String scheduleType = existingMed?.scheduleType ?? 'daily';
+    List<String> specificDates = List.from(existingMed?.specificDates ?? []);
+
     DateTime startDate = existingMed?.startDate ?? DateTime.now();
     File? selectedImage;
     if (existingMed?.imagePath != null && File(existingMed!.imagePath!).existsSync()) {
       selectedImage = File(existingMed.imagePath!);
     }
 
-    TimeOfDay? t1 = _parseTime(existingMed?.time1) ?? const TimeOfDay(hour: 8, minute: 0);
-    TimeOfDay? t2 = _parseTime(existingMed?.time2) ?? const TimeOfDay(hour: 14, minute: 0);
-    TimeOfDay? t3 = _parseTime(existingMed?.time3) ?? const TimeOfDay(hour: 21, minute: 0);
+    void recalcQty() {
+      final slotCount = selectedSlots.isEmpty ? 1 : selectedSlots.length;
+      final dur = int.tryParse(durationController.text) ?? 1;
+      final everyX = int.tryParse(everyXDaysController.text) ?? 1;
+      int qty;
+      if (scheduleType == 'specific_dates') {
+        qty = slotCount * specificDates.length;
+      } else if (scheduleType == 'every_x_days') {
+        qty = slotCount * (dur / everyX).ceil();
+      } else {
+        qty = slotCount * dur;
+      }
+      qtyController.text = qty.toString();
+    }
 
     showDialog(
       context: context,
@@ -107,12 +145,21 @@ class _MedsScreenState extends State<MedsScreen> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) {
           final durDays = int.tryParse(durationController.text) ?? 1;
-          final endDate = startDate.add(Duration(days: durDays)).subtract(const Duration(days: 1));
-          
+          final everyX = int.tryParse(everyXDaysController.text) ?? 1;
+          DateTime endDate;
+          if (scheduleType == 'specific_dates' && specificDates.isNotEmpty) {
+            endDate = DateTime.parse(specificDates.last);
+          } else if (scheduleType == 'every_x_days') {
+            final totalDays = (durDays / everyX).ceil() * everyX;
+            endDate = startDate.add(Duration(days: totalDays)).subtract(const Duration(days: 1));
+          } else {
+            endDate = startDate.add(Duration(days: durDays)).subtract(const Duration(days: 1));
+          }
+
           return AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             contentPadding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-            title: Text(existingMed == null ? "Add Medicine" : "Edit Medicine", 
+            title: Text(existingMed == null ? "Add Medicine" : "Edit Medicine",
               style: const TextStyle(fontWeight: FontWeight.bold)),
             content: SizedBox(
               width: MediaQuery.of(context).size.width,
@@ -120,7 +167,7 @@ class _MedsScreenState extends State<MedsScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Image Picker
+                    // ── Image Picker ──
                     GestureDetector(
                       onTap: () async {
                         final source = await _showImageSourceSheet(dialogContext);
@@ -132,96 +179,273 @@ class _MedsScreenState extends State<MedsScreen> {
                       child: _buildImagePlaceholder(selectedImage),
                     ),
                     const SizedBox(height: 16),
+
+                    // ── Name ──
                     TextField(
-                      controller: nameController, 
+                      controller: nameController,
                       decoration: const InputDecoration(
-                        labelText: "Medicine Name*", 
+                        labelText: "Medicine Name*",
                         prefixIcon: Icon(LucideIcons.pill),
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                       )
                     ),
                     const SizedBox(height: 12),
+
+                    // ── Dosage ──
                     TextField(
-                      controller: dosageController, 
+                      controller: dosageController,
                       decoration: const InputDecoration(
-                        labelText: "Dosage (e.g. 1 tablet)", 
+                        labelText: "Dosage (e.g. 1 tablet)",
                         prefixIcon: Icon(LucideIcons.scale),
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                       )
                     ),
-                    
+
+                    // ══════════════════════════════════
+                    // 4A — SLOT SELECTOR
+                    // ══════════════════════════════════
                     const SizedBox(height: 16),
                     const Align(
                       alignment: Alignment.centerLeft,
-                      child: Text("Frequency", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      child: Text("When to take", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     ),
+                    const SizedBox(height: 8),
                     Wrap(
-                      alignment: WrapAlignment.start,
-                      spacing: 0,
-                      children: [1, 2, 3].map((f) => SizedBox(
-                        width: (MediaQuery.of(context).size.width - 100) / 3,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Radio<int>(
-                              value: f,
-                              groupValue: frequency,
-                              activeColor: const Color(0xFF0EA5E9),
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              onChanged: (val) {
-                                setDialogState(() {
-                                  frequency = val!;
-                                  final dur = int.tryParse(durationController.text) ?? 7;
-                                  qtyController.text = (frequency * dur).toString();
-                                });
-                              },
-                            ),
-                            Flexible(child: Text("${f}x/day", style: const TextStyle(fontSize: 13))),
-                          ],
-                        ),
-                      )).toList(),
-                    ),
-
-                    const SizedBox(height: 12),
-                    _buildTimePickerTile(dialogContext, "Morning Time", t1, (t) => setDialogState(() => t1 = t)),
-                    if (frequency >= 2) _buildTimePickerTile(dialogContext, "Afternoon Time", t2, (t) => setDialogState(() => t2 = t)),
-                    if (frequency >= 3) _buildTimePickerTile(dialogContext, "Night Time", t3, (t) => setDialogState(() => t3 = t)),
-
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        Expanded(
-                          child: TextField(
-                            controller: durationController,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: "Duration (Days)", 
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                            ),
-                            onChanged: (val) {
-                              final dur = int.tryParse(val) ?? 1;
-                              setDialogState(() => qtyController.text = (frequency * dur).toString());
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: qtyController, 
-                            keyboardType: TextInputType.number, 
-                            decoration: const InputDecoration(
-                              labelText: "Total Qty", 
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                            )
-                          ),
-                        ),
+                        _buildSlotChip('morning', 'Morning', LucideIcons.sunrise, selectedSlots, setDialogState, recalcQty),
+                        _buildSlotChip('afternoon', 'Afternoon', LucideIcons.sun, selectedSlots, setDialogState, recalcQty),
+                        _buildSlotChip('evening', 'Evening', LucideIcons.sunset, selectedSlots, setDialogState, recalcQty),
+                        _buildSlotChip('night', 'Night', LucideIcons.moon, selectedSlots, setDialogState, recalcQty),
+                        _buildSlotChip('custom', 'Custom', LucideIcons.clock, selectedSlots, setDialogState, recalcQty),
                       ],
                     ),
+
+                    // ══════════════════════════════════
+                    // 4B — CUSTOM TIME PICKER
+                    // ══════════════════════════════════
+                    if (selectedSlots.contains('custom')) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.blue[100]!),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("Custom Times", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                            const SizedBox(height: 8),
+                            ...customAlarmTimes.asMap().entries.map((entry) {
+                              final idx = entry.key;
+                              final tod = entry.value;
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.grey[300]!),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(LucideIcons.clock, size: 16, color: Color(0xFF0EA5E9)),
+                                      const SizedBox(width: 8),
+                                      Text(tod.format(context), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                                      const Spacer(),
+                                      GestureDetector(
+                                        onTap: () => setDialogState(() {
+                                          customAlarmTimes.removeAt(idx);
+                                          recalcQty();
+                                        }),
+                                        child: const Icon(LucideIcons.x, size: 18, color: Colors.redAccent),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }),
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  final picked = await showTimePicker(context: dialogContext, initialTime: TimeOfDay.now());
+                                  if (picked != null) {
+                                    setDialogState(() {
+                                      customAlarmTimes.add(picked);
+                                      recalcQty();
+                                    });
+                                  }
+                                },
+                                icon: const Icon(LucideIcons.plus, size: 16),
+                                label: const Text("Add Time"),
+                                style: OutlinedButton.styleFrom(
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
+                                
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    // ══════════════════════════════════
+                    // 4C — SCHEDULE TYPE SELECTOR
+                    // ══════════════════════════════════
+                    const SizedBox(height: 16),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text("Schedule", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                    const SizedBox(height: 4),
+                    // Daily
+                    _buildScheduleRadio(
+                      value: 'daily',
+                      groupValue: scheduleType,
+                      label: 'Daily (take every day)',
+                      onChanged: (val) => setDialogState(() {
+                        scheduleType = val!;
+                        recalcQty();
+                      }),
+                    ),
+                    // Every X days
+                    _buildScheduleRadio(
+                      value: 'every_x_days',
+                      groupValue: scheduleType,
+                      label: 'Every X days',
+                      onChanged: (val) => setDialogState(() {
+                        scheduleType = val!;
+                        recalcQty();
+                      }),
+                      trailing: scheduleType == 'every_x_days'
+                          ? SizedBox(
+                              width: 60,
+                              height: 36,
+                              child: TextField(
+                                controller: everyXDaysController,
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 14),
+                                decoration: InputDecoration(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                  isDense: true,
+                                ),
+                                onChanged: (_) => setDialogState(() => recalcQty()),
+                              ),
+                            )
+                          : null,
+                    ),
+                    // Specific dates
+                    _buildScheduleRadio(
+                      value: 'specific_dates',
+                      groupValue: scheduleType,
+                      label: 'Specific dates',
+                      onChanged: (val) => setDialogState(() {
+                        scheduleType = val!;
+                        recalcQty();
+                      }),
+                      trailing: scheduleType == 'specific_dates'
+                          ? IconButton(
+                              icon: const Icon(LucideIcons.calendar, size: 20, color: Color(0xFF0EA5E9)),
+                              onPressed: () async {
+                                final picked = await showDatePicker(
+                                  context: dialogContext,
+                                  initialDate: DateTime.now(),
+                                  firstDate: DateTime.now(),
+                                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                                );
+                                if (picked != null) {
+                                  final dateStr = DateFormat('yyyy-MM-dd').format(picked);
+                                  setDialogState(() {
+                                    if (!specificDates.contains(dateStr)) {
+                                      specificDates.add(dateStr);
+                                      specificDates.sort();
+                                    }
+                                    recalcQty();
+                                  });
+                                }
+                              },
+                            )
+                          : null,
+                    ),
+                    // Show selected dates as chips
+                    if (scheduleType == 'specific_dates' && specificDates.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: specificDates.map((d) {
+                          final display = DateFormat('dd MMM').format(DateTime.parse(d));
+                          return Chip(
+                            label: Text(display, style: const TextStyle(fontSize: 12)),
+                            deleteIcon: const Icon(LucideIcons.x, size: 14),
+                            onDeleted: () => setDialogState(() {
+                              specificDates.remove(d);
+                              recalcQty();
+                            }),
+                            backgroundColor: Colors.blue[50],
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                          );
+                        }).toList(),
+                      ),
+                    ],
+
+                    // ── Duration (for daily and every_x_days) ──
+                    if (scheduleType != 'specific_dates') ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: durationController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: "Duration (Days)",
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                              onChanged: (_) => setDialogState(() => recalcQty()),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: qtyController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: "Total Qty",
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              )
+                            ),
+                          ),
+                        ],
+                      ),
+                    ] else ...[
+                      // Specific dates: show auto-calculated qty
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: qtyController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: "Total Qty (auto-calculated)",
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        )
+                      ),
+                    ],
+
                     const SizedBox(height: 12),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -230,21 +454,40 @@ class _MedsScreenState extends State<MedsScreen> {
                       trailing: const Icon(LucideIcons.calendar, color: Color(0xFF0EA5E9), size: 20),
                       onTap: () async {
                         final date = await showDatePicker(
-                          context: dialogContext, 
-                          initialDate: startDate, 
-                          firstDate: DateTime.now().subtract(const Duration(days: 365)), 
+                          context: dialogContext,
+                          initialDate: startDate,
+                          firstDate: DateTime.now().subtract(const Duration(days: 365)),
                           lastDate: DateTime.now().add(const Duration(days: 365))
                         );
                         if (date != null) setDialogState(() => startDate = date);
                       },
                     ),
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      width: double.infinity,
-                      decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
-                      child: Text("Auto-calculated End Date: ${DateFormat('dd MMM yyyy').format(endDate)}", 
-                        style: const TextStyle(color: Colors.blueGrey, fontSize: 12, fontWeight: FontWeight.bold)),
+                    if (scheduleType != 'specific_dates')
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        width: double.infinity,
+                        decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
+                        child: Text("Auto-calculated End Date: ${DateFormat('dd MMM yyyy').format(endDate)}",
+                          style: const TextStyle(color: Colors.blueGrey, fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
+
+                    // ══════════════════════════════════
+                    // 4D — NOTES FIELD
+                    // ══════════════════════════════════
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: notesController,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: "Doctor's instructions (optional)",
+                        hintText: "e.g. Take after meals, with water",
+                        hintStyle: TextStyle(color: Colors.grey[400]),
+                        prefixIcon: const Icon(LucideIcons.fileText, size: 20),
+                        border: const OutlineInputBorder(),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      ),
                     ),
+
                     const SizedBox(height: 16),
                   ],
                 ),
@@ -254,17 +497,21 @@ class _MedsScreenState extends State<MedsScreen> {
               TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text("Cancel")),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0EA5E9), 
+                  backgroundColor: selectedSlots.isEmpty ? Colors.grey : const Color(0xFF0EA5E9),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                onPressed: () => _handleSave(
+                onPressed: selectedSlots.isEmpty ? null : () => _handleSave(
                   dialogContext: dialogContext,
                   existingMed: existingMed,
                   name: nameController.text,
                   dosage: dosageController.text,
-                  freq: frequency,
-                  t1: t1, t2: t2, t3: t3,
+                  selectedSlots: selectedSlots,
+                  customAlarmTimes: customAlarmTimes,
+                  scheduleType: scheduleType,
+                  everyXDays: int.tryParse(everyXDaysController.text) ?? 1,
+                  specificDates: specificDates,
+                  notes: notesController.text,
                   dur: int.tryParse(durationController.text) ?? 7,
                   start: startDate,
                   qty: int.tryParse(qtyController.text) ?? 0,
@@ -279,13 +526,82 @@ class _MedsScreenState extends State<MedsScreen> {
     );
   }
 
+  Widget _buildSlotChip(String value, String label, IconData icon, List<String> selected,
+      StateSetter setDialogState, VoidCallback recalcQty) {
+    final isSelected = selected.contains(value);
+    return FilterChip(
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: isSelected ? Colors.white : const Color(0xFF0EA5E9)),
+          const SizedBox(width: 6),
+          Text(label),
+        ],
+      ),
+      selected: isSelected,
+      selectedColor: const Color(0xFF0EA5E9),
+      backgroundColor: Colors.white,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : Colors.black87,
+        fontWeight: FontWeight.w600,
+        fontSize: 13,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: isSelected ? const Color(0xFF0EA5E9) : Colors.grey[300]!,
+        ),
+      ),
+      onSelected: (val) {
+        setDialogState(() {
+          if (val) {
+            selected.add(value);
+          } else {
+            selected.remove(value);
+          }
+          recalcQty();
+        });
+      },
+    );
+  }
+
+  Widget _buildScheduleRadio({
+    required String value,
+    required String groupValue,
+    required String label,
+    required Function(String?) onChanged,
+    Widget? trailing,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Radio<String>(
+            value: value,
+            groupValue: groupValue,
+            activeColor: const Color(0xFF0EA5E9),
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+            onChanged: onChanged,
+          ),
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
+          if (trailing != null) trailing,
+        ],
+      ),
+    );
+  }
+
   Future<void> _handleSave({
     BuildContext? dialogContext,
     Medicine? existingMed,
     required String name,
     required String dosage,
-    required int freq,
-    TimeOfDay? t1, TimeOfDay? t2, TimeOfDay? t3,
+    required List<String> selectedSlots,
+    required List<TimeOfDay> customAlarmTimes,
+    required String scheduleType,
+    required int everyXDays,
+    required List<String> specificDates,
+    required String notes,
     required int dur,
     required DateTime start,
     required int qty,
@@ -296,6 +612,12 @@ class _MedsScreenState extends State<MedsScreen> {
 
     if (name.isEmpty) {
       AppSnackBar.showError(context, "Medicine name is required");
+      _isSaving = false;
+      return;
+    }
+
+    if (selectedSlots.isEmpty) {
+      AppSnackBar.showError(context, "Select at least one time slot");
       _isSaving = false;
       return;
     }
@@ -312,27 +634,57 @@ class _MedsScreenState extends State<MedsScreen> {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) return;
 
+      // Map selected slots to time1/time2/time3 for backward compat
+      // Load slot preferences for default times
+      final slotPrefs = await SlotPreferencesService().getPreferences();
+      final standardSlots = selectedSlots.where((s) => s != 'custom').toList();
+
+      // Build time list from standard slots using preferences
+      List<String> alarmTimeStrings = [];
+      for (final slot in standardSlots) {
+        final startKey = '${slot}_start';
+        final time24 = slotPrefs[startKey] ?? _defaultSlotStart(slot);
+        alarmTimeStrings.add(_formatTime24To12(time24));
+      }
+      // Add custom times
+      for (final tod in customAlarmTimes) {
+        alarmTimeStrings.add(_formatTimeOfDay(tod));
+      }
+
+      // Assign to time1/time2/time3
+      String? time1 = alarmTimeStrings.isNotEmpty ? alarmTimeStrings[0] : null;
+      String? time2 = alarmTimeStrings.length >= 2 ? alarmTimeStrings[1] : null;
+      String? time3 = alarmTimeStrings.length >= 3 ? alarmTimeStrings[2] : null;
+
+      // frequency = total slots for backward compat
+      int frequency = alarmTimeStrings.length;
+
       final med = Medicine(
         id: existingMed?.id,
         userId: userId,
         name: name,
         dosage: dosage,
-        frequency: freq,
-        time1: _formatTimeOfDay(t1!),
-        time2: freq >= 2 ? _formatTimeOfDay(t2!) : null,
-        time3: freq >= 3 ? _formatTimeOfDay(t3!) : null,
+        frequency: frequency,
+        time1: time1,
+        time2: time2,
+        time3: time3,
         startDate: start,
-        durationDays: dur,
+        durationDays: scheduleType == 'specific_dates' ? specificDates.length : dur,
         qty: qty,
         counter: existingMed?.counter ?? 0,
         isActive: true,
         isTaken: existingMed?.isTaken ?? false,
         imagePath: imagePath,
+        slotTypes: selectedSlots,
+        customTimes: customAlarmTimes.map((t) => _formatTimeOfDay(t)).toList(),
+        scheduleType: scheduleType,
+        everyXDays: everyXDays,
+        specificDates: specificDates,
+        notes: notes,
       );
 
       // Cancel old alarms if editing
       if (existingMed != null) {
-        // ✅ Sirf valid IDs cancel karo
         await _alarmService.cancelAlarmsForMedicine([
           existingMed.alarmId1,
           existingMed.alarmId2,
@@ -340,24 +692,85 @@ class _MedsScreenState extends State<MedsScreen> {
         ]);
       }
 
-      // Schedule new alarms only if today is between start_date and end_date
+      // 6C + 6D — Schedule slot-based alarms with retry logic
       int? aid1, aid2, aid3;
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final startDateOnly = DateTime(med.startDate.year, med.startDate.month, med.startDate.day);
       final endDateOnly = DateTime(med.endDate.year, med.endDate.month, med.endDate.day);
 
+      debugPrint("=== ALARM SCHEDULING DEBUG ===");
+      debugPrint("Med: ${med.name} | ID: ${med.id} | isPaused: ${med.isPaused}");
+      debugPrint("Selected slots: $selectedSlots");
+      debugPrint("Schedule type: ${med.scheduleType} | isActive: ${med.isActive}");
+      debugPrint("Start: $startDateOnly | End: $endDateOnly | Today: $today");
+      debugPrint("Date in range: ${(today.isAfter(startDateOnly) || today.isAtSameMomentAs(startDateOnly)) && (today.isBefore(endDateOnly) || today.isAtSameMomentAs(endDateOnly))}");
+      debugPrint("isActiveOnDate(today): ${med.isActiveOnDate(today)}");
+
       if ((today.isAfter(startDateOnly) || today.isAtSameMomentAs(startDateOnly)) &&
           (today.isBefore(endDateOnly) || today.isAtSameMomentAs(endDateOnly))) {
-        
-        print("Today is in range. Scheduling alarms...");
-        aid1 = await _scheduleSingleAlarm(med, 1, t1!);
-        if (freq >= 2) aid2 = await _scheduleSingleAlarm(med, 2, t2!);
-        if (freq >= 3) aid3 = await _scheduleSingleAlarm(med, 3, t3!);
+        // 6D — Check schedule type and pause status
+        if (med.isActiveOnDate(today) && !med.isPaused) {
+          final alarmSlotPrefs = await SlotPreferencesService().getPreferences();
+          debugPrint("Slot prefs loaded: $alarmSlotPrefs");
+          int slotCounter = 0;
+
+          for (final slot in selectedSlots) {
+            slotCounter++;
+            // Find custom time for this slot if applicable
+            TimeOfDay? customTod;
+            if (slot == 'custom' && customAlarmTimes.isNotEmpty) {
+              // Use the first custom time (or match by index if multiple custom times)
+              final customIdx = selectedSlots.where((s) => s == 'custom').toList().indexOf(slot);
+              customTod = customIdx < customAlarmTimes.length
+                  ? customAlarmTimes[customIdx]
+                  : customAlarmTimes.first;
+            }
+
+            final ids = await _alarmService.scheduleSlotAlarms(
+              medicationId: med.id ?? '',
+              medicineName: med.name,
+              dosage: med.dosage,
+              imagePath: med.imagePath,
+              slot: slot,
+              date: today,
+              prefs: alarmSlotPrefs,
+              customTime: customTod,
+            );
+
+            debugPrint("Slot '$slot' -> ${ids.length} alarms scheduled, first ID: ${ids.isNotEmpty ? ids.first : 'none'}");
+
+            // Store first alarm ID per slot for backward compat
+            if (ids.isNotEmpty) {
+              if (slotCounter == 1) aid1 = ids.first;
+              if (slotCounter == 2) aid2 = ids.first;
+              if (slotCounter == 3) aid3 = ids.first;
+            }
+          }
+        } else {
+          debugPrint("SKIP: isActiveOnDate=false or isPaused=true — no alarms scheduled");
+        }
       } else {
-        print("Today is NOT in range. Alarms not scheduled.");
-        print("Today: $today, Start: $startDateOnly, End: $endDateOnly");
+        debugPrint("SKIP: today not in date range — no alarms scheduled");
       }
+      // FIX 1: When slot system is active, cancel old legacy alarms and null out IDs
+      if (selectedSlots.isNotEmpty) {
+        if (existingMed?.alarmId1 != null) {
+          await _alarmService.cancelAlarm(existingMed!.alarmId1!);
+        }
+        if (existingMed?.alarmId2 != null) {
+          await _alarmService.cancelAlarm(existingMed!.alarmId2!);
+        }
+        if (existingMed?.alarmId3 != null) {
+          await _alarmService.cancelAlarm(existingMed!.alarmId3!);
+        }
+        aid1 = null;
+        aid2 = null;
+        aid3 = null;
+        debugPrint("FIX 1: Cancelled legacy alarm IDs, using slot system only");
+      }
+
+      debugPrint("=== FINAL: aid1=$aid1 aid2=$aid2 aid3=$aid3 ===");
 
       final finalMed = Medicine(
         id: med.id,
@@ -378,12 +791,16 @@ class _MedsScreenState extends State<MedsScreen> {
         isActive: med.isActive,
         isTaken: med.isTaken,
         imagePath: med.imagePath,
+        slotTypes: med.slotTypes,
+        customTimes: med.customTimes,
+        scheduleType: med.scheduleType,
+        everyXDays: med.everyXDays,
+        specificDates: med.specificDates,
+        notes: med.notes,
       );
 
       if (existingMed == null) {
         await _supabase.from('medications').insert(finalMed.toJson());
-        
-        // Log activity for new medicine
         try {
           await ActivityService.log(
             actionType: 'MEDICINE_ADDED',
@@ -398,11 +815,10 @@ class _MedsScreenState extends State<MedsScreen> {
 
       if (mounted) {
         if (dialogContext != null && Navigator.canPop(dialogContext)) {
-          Navigator.pop(dialogContext); // ✅ Dialog close karo
+          Navigator.pop(dialogContext);
         }
         _fetchMedications();
         AppSnackBar.showSuccess(context, "Medicine saved successfully!");
-        // Notify home screen to refresh Due Soon panel
         medicineUpdatedNotifier.value++;
       }
     } catch (e) {
@@ -413,85 +829,103 @@ class _MedsScreenState extends State<MedsScreen> {
     }
   }
 
-  /// Generates a unique alarm ID using a monotonic counter stored in SharedPreferences.
-  /// Avoids hashCode collisions and is deterministic across isolates.
-  Future<int> _nextAlarmId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = prefs.getInt('alarm_id_counter') ?? 1000;
-    final next = current + 1;
-    await prefs.setInt('alarm_id_counter', next);
-    return next;
+  String _defaultSlotStart(String slot) {
+    switch (slot) {
+      case 'morning': return '08:00';
+      case 'afternoon': return '12:00';
+      case 'evening': return '16:00';
+      case 'night': return '21:00';
+      default: return '08:00';
+    }
   }
 
-  Future<int?> _scheduleSingleAlarm(Medicine med, int slot, TimeOfDay tod) async {
-    final stableId = await _nextAlarmId();
-    final now = DateTime.now();
-    DateTime alarmTime = DateTime(now.year, now.month, now.day, tod.hour, tod.minute);
+  String _formatTime24To12(String time24) {
+    final parts = time24.split(':');
+    if (parts.length != 2) return time24;
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
+    final period = h >= 12 ? 'PM' : 'AM';
+    final hour12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+    return '${hour12.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')} $period';
+  }
 
-    debugPrint("=== ALARM SCHEDULE ATTEMPT ===");
-    debugPrint("Medicine: ${med.name}, Slot: $slot, ID: $stableId");
-    debugPrint("Requested time: ${tod.format(context)} => DateTime: $alarmTime");
-    debugPrint("Current time: $now");
-
-    // If the time has ALREADY PASSED today (not just 2 min buffer — remove that logic)
-    // Only shift to tomorrow if more than 1 minute in the past
-    if (alarmTime.isBefore(now.subtract(const Duration(minutes: 1)))) {
-      debugPrint("⚠️ Time already passed today — shifting to TOMORROW");
-      alarmTime = alarmTime.add(const Duration(days: 1));
-      debugPrint("New alarm time: $alarmTime");
-    }
-
-    // Safety: Never schedule a past alarm
-    if (alarmTime.isBefore(now)) {
-      debugPrint("⚠️ Still in past after adjustment — adding 1 more day");
-      alarmTime = alarmTime.add(const Duration(days: 1));
-    }
-
-    final endDateLimit = DateTime(
-      med.endDate.year, med.endDate.month, med.endDate.day, 23, 59, 59
+  void _showMedicineOptions(Medicine med) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(LucideIcons.edit3, color: Color(0xFF0EA5E9)),
+              title: const Text('Edit Medicine'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showAddEditDialog(existingMed: med);
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                med.isPaused ? LucideIcons.play : LucideIcons.pause,
+                color: med.isPaused ? Colors.green : Colors.orange,
+              ),
+              title: Text(med.isPaused ? 'Resume Medicine' : 'Pause Medicine'),
+              subtitle: Text(med.isPaused
+                  ? 'Alarms and reminders will resume'
+                  : 'Alarms and reminders will be paused'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _togglePauseMedicine(med);
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.trash2, color: Colors.red),
+              title: const Text('Delete Medicine', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _deleteMedication(med);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
+  }
 
-    if (alarmTime.isBefore(endDateLimit)) {
-      try {
-        await _alarmService.scheduleAlarm(
-          id: stableId,
-          medicineName: med.name,
-          dosage: med.dosage,
-          imagePath: med.imagePath ?? '',
-          time: alarmTime,
-        );
+  Future<void> _togglePauseMedicine(Medicine med) async {
+    final newPaused = !med.isPaused;
+    try {
+      await _supabase
+          .from('medications')
+          .update({'is_paused': newPaused})
+          .eq('id', med.id!);
 
-        // Cache full medication data for instant AlarmScreen
-        try {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('cached_med_$stableId', jsonEncode({
-            'id': med.id ?? '',
-            'name': med.name,
-            'dosage': med.dosage,
-            'qty': med.qty,
-            'image_path': med.imagePath,
-            'alarm_id1': med.alarmId1,
-            'alarm_id2': med.alarmId2,
-            'alarm_id3': med.alarmId3,
-            'slot': slot,
-          }));
-        } catch (_) {}
-
-        final alarms = await Alarm.getAlarms();
-        final wasSet = alarms.any((a) => a.id == stableId);
-        debugPrint(wasSet
-          ? "✅ SUCCESS: Alarm $stableId set for $alarmTime"
-          : "❌ FAILED: Alarm $stableId NOT found in active alarms!");
-        debugPrint("All active alarms: ${alarms.map((a) => '${a.id}@${a.dateTime}').join(', ')}");
-
-        return stableId;
-      } catch (e) {
-        debugPrint("❌ EXCEPTION while scheduling: $e");
-        return null;
+      if (newPaused) {
+        // Cancel all alarms for this medicine
+        await _alarmService.cancelAlarmsForMedicine([
+          med.alarmId1,
+          med.alarmId2,
+          med.alarmId3,
+        ]);
+        AppSnackBar.showInfo(context, "${med.name} paused — alarms cancelled");
+      } else {
+        AppSnackBar.showInfo(context, "${med.name} resumed");
       }
-    } else {
-      debugPrint("❌ NOT SCHEDULED: alarmTime ($alarmTime) is after endDate ($endDateLimit)");
-      return null;
+
+      _fetchMedications();
+    } catch (e) {
+      debugPrint('Pause toggle error: $e');
+      AppSnackBar.showError(context, "Failed to ${newPaused ? 'pause' : 'resume'} medicine");
     }
   }
 
@@ -665,44 +1099,7 @@ class _MedsScreenState extends State<MedsScreen> {
               color: const Color(0xFF0EA5E9),
               child: _medications.isEmpty
                   ? _buildEmptyState()
-                  : Builder(
-                      builder: (context) {
-                        final activeMeds = _medications.where((m) => m.isActive).toList();
-                        final inactiveMeds = _medications.where((m) => !m.isActive).toList();
-                        final totalItems = activeMeds.length + (inactiveMeds.isNotEmpty ? inactiveMeds.length + 1 : 0);
-                        return ListView.builder(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: totalItems,
-                          itemBuilder: (ctx, i) {
-                            if (i < activeMeds.length) {
-                              return _buildMedicineCard(activeMeds[i]);
-                            }
-                            if (i == activeMeds.length) {
-                              // Section header for inactive
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 16, bottom: 8),
-                                child: Row(
-                                  children: [
-                                    const Icon(LucideIcons.archive, size: 18, color: Colors.grey),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      "Completed / Inactive",
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-                            final inactiveIndex = i - activeMeds.length - 1;
-                            return _buildInactiveMedicineCard(inactiveMeds[inactiveIndex]);
-                          },
-                        );
-                      },
-                    ),
+                  : _buildGroupedSlotView(),
             ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'add_medicine_fab',
@@ -712,6 +1109,223 @@ class _MedsScreenState extends State<MedsScreen> {
         label: const Text("Add Medicine", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
       ),
     );
+  }
+
+  // ══════════════════════════════════
+  // SLOT-GROUPED VIEW
+  // ══════════════════════════════════
+
+  Map<String, List<Medicine>> _groupMedicinesBySlot(List<Medicine> meds) {
+    final groups = {
+      'morning': <Medicine>[],
+      'afternoon': <Medicine>[],
+      'evening': <Medicine>[],
+      'night': <Medicine>[],
+      'custom': <Medicine>[],
+    };
+    for (final med in meds) {
+      if (!med.isActive) continue; // inactive meds handled separately
+      for (final slot in med.slotTypes) {
+        groups[slot]?.add(med);
+      }
+      if (med.slotTypes.isEmpty) {
+        groups['custom']?.add(med); // Legacy medicines go to custom
+      }
+    }
+    return groups;
+  }
+
+  Widget _buildGroupedSlotView() {
+    final activeMeds = _medications.where((m) => m.isActive).toList();
+    final inactiveMeds = _medications.where((m) => !m.isActive).toList();
+    final groups = _groupMedicinesBySlot(activeMeds);
+
+    final slotOrder = ['morning', 'afternoon', 'evening', 'night', 'custom'];
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: slotOrder.where((s) => groups[s]!.isNotEmpty).length
+          + (inactiveMeds.isNotEmpty ? 1 : 0),
+      itemBuilder: (ctx, i) {
+        // Filter to non-empty slots
+        final nonEmptySlots = slotOrder.where((s) => groups[s]!.isNotEmpty).toList();
+
+        if (i < nonEmptySlots.length) {
+          final slot = nonEmptySlots[i];
+          return _buildSlotCard(slot, groups[slot]!);
+        }
+
+        // Inactive section
+        if (inactiveMeds.isNotEmpty) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 16, bottom: 8),
+                child: Row(
+                  children: [
+                    const Icon(LucideIcons.archive, size: 18, color: Colors.grey),
+                    const SizedBox(width: 8),
+                    Text(
+                      "Completed / Inactive",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              ...inactiveMeds.map((m) => _buildInactiveMedicineCard(m)),
+            ],
+          );
+        }
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Widget _buildSlotCard(String slot, List<Medicine> meds) {
+    final slotConfig = _slotCardConfig(slot);
+    final isExpanded = _expandedSlots.contains(slot);
+    final timeRange = _slotTimeRange(slot);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: slotConfig['color'].withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: slotConfig['color'].withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // ── Card Header ──
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => setState(() {
+              isExpanded ? _expandedSlots.remove(slot) : _expandedSlots.add(slot);
+            }),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: slotConfig['color'].withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(slotConfig['icon'], size: 20, color: slotConfig['color']),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              slotConfig['label'],
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: slotConfig['color'].withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '${meds.length} medicine${meds.length > 1 ? 's' : ''}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: slotConfig['color'],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (timeRange.isNotEmpty)
+                          Text(
+                            timeRange,
+                            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                          ),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: isExpanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(LucideIcons.chevronDown, size: 20, color: Colors.grey[400]),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ── Medicine List ──
+          AnimatedCrossFade(
+            firstChild: const SizedBox.shrink(),
+            secondChild: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Column(
+                children: meds.map((med) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _buildMedicineCard(med),
+                )).toList(),
+              ),
+            ),
+            crossFadeState: isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Map<String, dynamic> _slotCardConfig(String slot) {
+    switch (slot) {
+      case 'morning':
+        return {'icon': LucideIcons.sunrise, 'label': 'Morning', 'color': const Color(0xFFF59E0B)};
+      case 'afternoon':
+        return {'icon': LucideIcons.sun, 'label': 'Afternoon', 'color': const Color(0xFFF97316)};
+      case 'evening':
+        return {'icon': LucideIcons.sunset, 'label': 'Evening', 'color': const Color(0xFF8B5CF6)};
+      case 'night':
+        return {'icon': LucideIcons.moon, 'label': 'Night', 'color': const Color(0xFF3B82F6)};
+      case 'custom':
+        return {'icon': LucideIcons.clock, 'label': 'Custom', 'color': const Color(0xFF10B981)};
+      default:
+        return {'icon': LucideIcons.clock, 'label': slot, 'color': Colors.grey};
+    }
+  }
+
+  String _slotTimeRange(String slot) {
+    final startKey = '${slot}_start';
+    final endKey = '${slot}_end';
+    final start = _slotPrefs[startKey];
+    final end = _slotPrefs[endKey];
+    if (start == null || end == null) return '';
+    return '${_formatTimeTo12(start)} – ${_formatTimeTo12(end)}';
+  }
+
+  String _formatTimeTo12(String time24) {
+    final parts = time24.split(':');
+    if (parts.length != 2) return time24;
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
+    final period = h >= 12 ? 'PM' : 'AM';
+    final hour12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+    return '$hour12:${m.toString().padLeft(2, '0')} $period';
   }
 
   Widget _buildMedicineCard(Medicine med) {
@@ -738,22 +1352,23 @@ class _MedsScreenState extends State<MedsScreen> {
         await _deleteMedication(med);
         return false;
       },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ===== 1. ORIGINAL CARD CONTENT (untouched) =====
-            InkWell(
+      child: Opacity(
+        opacity: med.isPaused ? 0.5 : 1.0,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 2)),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ===== 1. ORIGINAL CARD CONTENT (untouched) =====
+              InkWell(
               borderRadius: BorderRadius.circular(20),
-              onLongPress: () => _showAddEditDialog(existingMed: med),
+              onLongPress: () => _showMedicineOptions(med),
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -797,6 +1412,18 @@ class _MedsScreenState extends State<MedsScreen> {
                                 ),
                               ),
                               const SizedBox(width: 8),
+                              if (med.isPaused)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[200],
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text("Paused",
+                                    style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              const SizedBox(width: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
@@ -900,6 +1527,7 @@ class _MedsScreenState extends State<MedsScreen> {
               ),
             ],
           ],
+        ),
         ),
       ),
     );
@@ -1074,30 +1702,6 @@ class _MedsScreenState extends State<MedsScreen> {
     final m = tod.minute.toString().padLeft(2, '0');
     final p = tod.period == DayPeriod.am ? "AM" : "PM";
     return "${h.toString().padLeft(2, '0')}:$m $p";
-  }
-
-  Widget _buildTimePickerTile(BuildContext context, String label, TimeOfDay? time, Function(TimeOfDay) onPicked) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey[200]!)
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-        visualDensity: VisualDensity.compact,
-        dense: true,
-        title: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-        subtitle: Text(time == null ? "Not set" : time.format(context), 
-          style: TextStyle(color: time == null ? Colors.grey : const Color(0xFF0EA5E9), fontWeight: FontWeight.bold, fontSize: 14)),
-        trailing: const Icon(LucideIcons.clock, size: 18, color: Color(0xFF0EA5E9)),
-        onTap: () async {
-          final t = await showTimePicker(context: context, initialTime: time ?? TimeOfDay.now());
-          if (t != null) onPicked(t);
-        },
-      ),
-    );
   }
 
   Future<ImageSource?> _showImageSourceSheet(BuildContext context) {

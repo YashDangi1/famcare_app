@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/alarm_setup_screen.dart';
 import 'utils/snackbar_utils.dart';
 import 'login_screen.dart';
+import 'services/slot_preferences_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -25,6 +26,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isSaving = false;
   bool _isLoading = true;
   bool _alarmStyleFullscreen = true; // default: full screen
+
+  // Slot preferences
+  final _slotService = SlotPreferencesService();
+  Map<String, dynamic> _slotPrefs = {};
+  bool _slotPrefsLoaded = false;
 
   final List<String> _bloodGroups = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 
@@ -44,6 +50,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final prefs = await SharedPreferences.getInstance();
       final fullscreen = prefs.getBool('alarm_style_fullscreen') ?? true;
 
+      // Load slot preferences
+      final slotPrefs = await _slotService.getPreferences();
+
       if (data != null && mounted) {
         File? avatar;
         if (data['avatar_url'] != null) {
@@ -57,6 +66,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _selectedBloodGroup = data['blood_group'];
           _avatarImage = avatar;
           _alarmStyleFullscreen = fullscreen;
+          _slotPrefs = slotPrefs;
+          _slotPrefsLoaded = true;
           _isLoading = false;
         });
       }
@@ -223,6 +234,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 20),
+            _buildScheduleTimesSection(),
+            const SizedBox(height: 20),
             TextField(
               controller: _nameController,
               decoration: InputDecoration(
@@ -302,6 +315,159 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  // ── Medicine Schedule Times ──
+
+  Widget _buildScheduleTimesSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF10B981).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(LucideIcons.clock, color: Color(0xFF10B981), size: 22),
+            ),
+            title: const Text('Medicine Schedule Times', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Set your preferred time ranges for each slot'),
+          ),
+          if (_slotPrefsLoaded) ...[
+            _buildSlotTile('morning', 'Morning', LucideIcons.sunrise, const Color(0xFFF59E0B)),
+            _buildSlotTile('afternoon', 'Afternoon', LucideIcons.sun, const Color(0xFFF97316)),
+            _buildSlotTile('evening', 'Evening', LucideIcons.sunset, const Color(0xFF8B5CF6)),
+            _buildSlotTile('night', 'Night', LucideIcons.moon, const Color(0xFF3B82F6)),
+          ] else
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSlotTile(String slot, String label, IconData icon, Color color) {
+    final startKey = '${slot}_start';
+    final endKey = '${slot}_end';
+    final startTime = _slotPrefs[startKey] ?? '08:00';
+    final endTime = _slotPrefs[endKey] ?? '09:30';
+
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        leading: Icon(icon, color: color, size: 20),
+        title: Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+        subtitle: Text(
+          '${_formatTime(startTime)} — ${_formatTime(endTime)}',
+          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _buildTimePickerButton(
+                    label: 'Start',
+                    time: startTime,
+                    color: color,
+                    onPicked: (picked) {
+                      setState(() => _slotPrefs[startKey] = picked);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerButton(
+                    label: 'End',
+                    time: endTime,
+                    color: color,
+                    onPicked: (picked) {
+                      setState(() => _slotPrefs[endKey] = picked);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                IconButton(
+                  onPressed: () => _saveSlotPrefs(),
+                  icon: const Icon(LucideIcons.check, color: Color(0xFF10B981)),
+                  tooltip: 'Save',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimePickerButton({
+    required String label,
+    required String time,
+    required Color color,
+    required Function(String) onPicked,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: () async {
+        final parsed = _parseTime(time);
+        final picked = await showTimePicker(
+          context: context,
+          initialTime: TimeOfDay(hour: parsed[0], minute: parsed[1]),
+          builder: (context, child) {
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+              child: child!,
+            );
+          },
+        );
+        if (picked != null) {
+          final formatted = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+          onPicked(formatted);
+        }
+      },
+      icon: Icon(LucideIcons.clock, size: 16, color: color),
+      label: Text(
+        _formatTime(time),
+        style: const TextStyle(fontSize: 14),
+      ),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  Future<void> _saveSlotPrefs() async {
+    try {
+      await _slotService.savePreferences(_slotPrefs);
+      if (mounted) AppSnackBar.showSuccess(context, 'Schedule times saved!');
+    } catch (e) {
+      if (mounted) AppSnackBar.showError(context, 'Error saving: $e');
+    }
+  }
+
+  String _formatTime(String time24) {
+    final parts = time24.split(':');
+    if (parts.length != 2) return time24;
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts[1]) ?? 0;
+    final period = h >= 12 ? 'PM' : 'AM';
+    final hour12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+    return '$hour12:${m.toString().padLeft(2, '0')} $period';
+  }
+
+  List<int> _parseTime(String time24) {
+    final parts = time24.split(':');
+    return [int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0];
   }
 
   Widget _buildSettingsTile({
