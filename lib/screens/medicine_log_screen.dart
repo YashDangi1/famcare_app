@@ -249,7 +249,7 @@ class _MedicineLogScreenState extends State<MedicineLogScreen> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [what 
+              children: [
                 Text(
                   log['medicine_name'] as String? ?? widget.medicineName,
                   maxLines: 1,

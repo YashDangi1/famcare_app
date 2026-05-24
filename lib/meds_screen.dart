@@ -716,35 +716,51 @@ class _MedsScreenState extends State<MedsScreen> {
           int slotCounter = 0;
 
           for (final slot in selectedSlots) {
-            slotCounter++;
-            // Find custom time for this slot if applicable
-            TimeOfDay? customTod;
-            if (slot == 'custom' && customAlarmTimes.isNotEmpty) {
-              // Use the first custom time (or match by index if multiple custom times)
-              final customIdx = selectedSlots.where((s) => s == 'custom').toList().indexOf(slot);
-              customTod = customIdx < customAlarmTimes.length
-                  ? customAlarmTimes[customIdx]
-                  : customAlarmTimes.first;
-            }
+            if (slot == 'custom') {
+              for (int i = 0; i < customAlarmTimes.length; i++) {
+                final customTod = customAlarmTimes[i];
+                final customTimeLabel =
+                    '${customTod.hour.toString().padLeft(2, '0')}:${customTod.minute.toString().padLeft(2, '0')}';
+                final ids = await _alarmService.scheduleSlotAlarms(
+                  medicationId: med.id ?? '',
+                  medicineName: med.name,
+                  dosage: med.dosage,
+                  imagePath: med.imagePath,
+                  slot: 'custom',
+                  date: today,
+                  prefs: alarmSlotPrefs,
+                  customTime: customTod,
+                );
 
-            final ids = await _alarmService.scheduleSlotAlarms(
-              medicationId: med.id ?? '',
-              medicineName: med.name,
-              dosage: med.dosage,
-              imagePath: med.imagePath,
-              slot: slot,
-              date: today,
-              prefs: alarmSlotPrefs,
-              customTime: customTod,
-            );
+                debugPrint('Custom time ${i + 1}: $customTimeLabel -> '
+                    '${ids.length} alarms scheduled');
+                if (ids.isNotEmpty && slotCounter < 3) {
+                  slotCounter++;
+                  if (slotCounter == 1) aid1 = ids.first;
+                  if (slotCounter == 2) aid2 = ids.first;
+                  if (slotCounter == 3) aid3 = ids.first;
+                }
+              }
+            } else {
+              slotCounter++;
+              final ids = await _alarmService.scheduleSlotAlarms(
+                medicationId: med.id ?? '',
+                medicineName: med.name,
+                dosage: med.dosage,
+                imagePath: med.imagePath,
+                slot: slot,
+                date: today,
+                prefs: alarmSlotPrefs,
+              );
 
-            debugPrint("Slot '$slot' -> ${ids.length} alarms scheduled, first ID: ${ids.isNotEmpty ? ids.first : 'none'}");
+              debugPrint("Slot '$slot' -> ${ids.length} alarms scheduled, first ID: ${ids.isNotEmpty ? ids.first : 'none'}");
 
-            // Store first alarm ID per slot for backward compat
-            if (ids.isNotEmpty) {
-              if (slotCounter == 1) aid1 = ids.first;
-              if (slotCounter == 2) aid2 = ids.first;
-              if (slotCounter == 3) aid3 = ids.first;
+              // Store first alarm ID per slot for backward compat
+              if (ids.isNotEmpty) {
+                if (slotCounter == 1) aid1 = ids.first;
+                if (slotCounter == 2) aid2 = ids.first;
+                if (slotCounter == 3) aid3 = ids.first;
+              }
             }
           }
         } else {
@@ -1328,6 +1344,24 @@ class _MedsScreenState extends State<MedsScreen> {
     return '$hour12:${m.toString().padLeft(2, '0')} $period';
   }
 
+  String _formatMedicineChipTime(String timeStr, BuildContext context) {
+    final trimmed = timeStr.trim();
+
+    try {
+      final parsed = DateFormat('hh:mm a').parseStrict(trimmed);
+      return TimeOfDay(hour: parsed.hour, minute: parsed.minute).format(context);
+    } catch (_) {
+      final parts = trimmed.split(':');
+      if (parts.length < 2) return timeStr;
+
+      final hour = int.tryParse(parts[0]);
+      final minute = int.tryParse(parts[1]);
+      if (hour == null || minute == null) return timeStr;
+
+      return TimeOfDay(hour: hour, minute: minute).format(context);
+    }
+  }
+
   Widget _buildMedicineCard(Medicine med) {
     final isExpanded = _expandedMedId == med.id;
     final bool lowStock = med.qty <= med.frequency * 3;
@@ -1456,7 +1490,10 @@ class _MedsScreenState extends State<MedsScreen> {
                                 children: [
                                   const Icon(LucideIcons.clock, size: 10, color: Color(0xFF0EA5E9)),
                                   const SizedBox(width: 4),
-                                  Text(t, style: const TextStyle(fontSize: 11, color: Color(0xFF0EA5E9), fontWeight: FontWeight.bold)),
+                                  Text(
+                                    _formatMedicineChipTime(t, context),
+                                    style: const TextStyle(fontSize: 11, color: Color(0xFF0EA5E9), fontWeight: FontWeight.bold),
+                                  ),
                                 ],
                               ),
                             )).toList(),

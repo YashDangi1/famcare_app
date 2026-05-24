@@ -121,9 +121,40 @@ class _AlarmSetupScreenState extends State<AlarmSetupScreen>
   Future<void> _requestFullScreenIntent() async {
     final status = await Permission.systemAlertWindow.request();
     if (status.isDenied || status.isPermanentlyDenied) {
-      await AppSettings.openAppSettings();
+      if (!mounted) return;
+      await _showDisplayOverAppsDialog();
     }
     await _checkAll();
+  }
+
+  Future<void> _showDisplayOverAppsDialog() {
+    return showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Permission Required'),
+        content: const Text(
+          'Your phone has restricted this permission.\n\n'
+          'To enable manually:\n'
+          '1. Go to Settings -> Apps -> FamCare\n'
+          '2. Tap "Display over other apps" -> Enable\n\n'
+          'If blocked by security app:\n'
+          'Settings -> Security -> Special app access -> '
+          'Display over other apps -> FamCare -> Allow\n\n'
+          'Without this, alarm screen won\'t show on '
+          'lock screen but sound notifications will work.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => AppSettings.openAppSettings(),
+            child: const Text('Open Settings'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   // Open manufacturer-specific settings via Intent

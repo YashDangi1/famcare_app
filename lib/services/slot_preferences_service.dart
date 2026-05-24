@@ -19,11 +19,14 @@ class SlotPreferencesService {
   Future<void> savePreferences(Map<String, dynamic> prefs) async {
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
-    await _supabase.from('user_slot_preferences').upsert({
-      'user_id': userId,
-      ...prefs,
-      'updated_at': DateTime.now().toIso8601String(),
-    });
+    await _supabase.from('user_slot_preferences').upsert(
+      {
+        'user_id': userId,
+        ...prefs,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      onConflict: 'user_id',
+    );
   }
 
   Map<String, dynamic> _defaults() => {

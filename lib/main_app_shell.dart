@@ -567,21 +567,67 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!med.isActiveOnDate(now)) continue;
 
       for (final slot in med.slotTypes) {
-        final slotStart = _slotStartToday(slot);
-        final slotEnd = _slotEndToday(slot);
+        if (slot == 'custom') {
+          for (int i = 0; i < med.customTimes.length; i++) {
+            final timeStr = med.customTimes[i];
+            DateTime? customAlarmTime;
 
-        // Medicine is due if current time is within the slot range
-        if (now.isAfter(slotStart) && now.isBefore(slotEnd)) {
-          final slotIdx = _slotIndex(slot);
-          final slotKey = _slotKey(med.id ?? '', slotIdx);
-          if (!_takenSlotIdsToday.contains(slotKey) &&
-              !_skippedSlotIds.contains(slotKey)) {
-            dueSoon.add({
-              'medicine': med,
-              'slot': slotIdx,
-              'slotName': _slotNameLabel(slot),
-              'dateTime': slotStart,
-            });
+            try {
+              final parsed = DateFormat('hh:mm a').parseStrict(timeStr.trim());
+              customAlarmTime = DateTime(
+                now.year,
+                now.month,
+                now.day,
+                parsed.hour,
+                parsed.minute,
+              );
+            } catch (_) {
+              final parts = timeStr.trim().split(':');
+              if (parts.length < 2) continue;
+              final hour = int.tryParse(parts[0]);
+              final minute = int.tryParse(parts[1]);
+              if (hour == null || minute == null) continue;
+              customAlarmTime = DateTime(
+                now.year,
+                now.month,
+                now.day,
+                hour,
+                minute,
+              );
+            }
+
+            final diff = customAlarmTime.difference(now).inMinutes;
+            if (diff >= -30 && diff <= 15) {
+              final slotKey = _slotKey(med.id ?? '', 500 + i);
+              if (!_takenSlotIdsToday.contains(slotKey) &&
+                  !_skippedSlotIds.contains(slotKey)) {
+                dueSoon.add({
+                  'medicine': med,
+                  'slot': 500 + i,
+                  'customTimeStr': timeStr,
+                  'slotName': 'Custom',
+                  'dateTime': customAlarmTime,
+                });
+              }
+            }
+          }
+        } else {
+          final slotStart = _slotStartToday(slot);
+          final slotEnd = _slotEndToday(slot);
+
+          // Medicine is due if current time is within the slot range
+          if (now.isAfter(slotStart) && now.isBefore(slotEnd)) {
+            final slotIdx = _slotIndex(slot);
+            final slotKey = _slotKey(med.id ?? '', slotIdx);
+            if (!_takenSlotIdsToday.contains(slotKey) &&
+                !_skippedSlotIds.contains(slotKey)) {
+              dueSoon.add({
+                'medicine': med,
+                'slot': slotIdx,
+                'slotName': _slotNameLabel(slot),
+                'dateTime': slotStart,
+              });
+            }
           }
         }
       }
