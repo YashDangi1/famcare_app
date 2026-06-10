@@ -73,7 +73,7 @@ class Medicine {
 
   // returns non-null time strings based on frequency
   List<String> get activeTimes {
-    List<String> times = [];
+    final List<String> times = [];
     if (frequency >= 1 && time1 != null) times.add(time1!);
     if (frequency >= 2 && time2 != null) times.add(time2!);
     if (frequency >= 3 && time3 != null) times.add(time3!);
@@ -181,20 +181,4 @@ class Medicine {
     return true; // daily
   }
 
-  /// Returns alarm times for a given slot type using preferences
-  List<String> getAlarmTimesForSlot(String slot, Map<String, dynamic> prefs) {
-    if (slot == 'custom') return customTimes;
-    final key = '${slot}_start';
-    return [prefs[key] ?? _defaultSlotStart(slot)];
-  }
-
-  static String _defaultSlotStart(String slot) {
-    switch (slot) {
-      case 'morning': return '08:00 AM';
-      case 'afternoon': return '12:00 PM';
-      case 'evening': return '04:00 PM';
-      case 'night': return '09:00 PM';
-      default: return '08:00 AM';
-    }
-  }
 }

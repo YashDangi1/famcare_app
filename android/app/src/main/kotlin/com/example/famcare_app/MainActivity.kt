@@ -20,6 +20,11 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        if (intent?.getBooleanExtra("reschedule_alarms", false) == true) {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            prefs.edit().putBoolean("flutter.needs_reschedule", true).apply()
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -151,6 +156,11 @@ class MainActivity : FlutterActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.getBooleanExtra("reschedule_alarms", false)) {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            prefs.edit().putBoolean("flutter.needs_reschedule", true).apply()
+            return
+        }
         // Check for alarm_id in the new intent (from AlarmService.startActivity)
         val alarmId = intent.getIntExtra("alarm_id", -1)
         if (alarmId != -1) {

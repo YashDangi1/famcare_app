@@ -293,3 +293,4 @@ class _MedicineLogScreenState extends State<MedicineLogScreen> {
     );
   }
 }
+

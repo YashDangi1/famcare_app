@@ -13,6 +13,10 @@ class AlarmService {
   factory AlarmService() => instance;
   AlarmService._internal();
 
+  /// Offset added to an alarm's original ID to create its snooze ID.
+  /// Any alarm with id > kSnoozeOffset is a snooze.
+  static const int kSnoozeOffset = 900000;
+
   final FlutterLocalNotificationsPlugin notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
@@ -93,16 +97,13 @@ class AlarmService {
     // Save medicine data for instant alarm screen — no DB needed
     try {
       final prefs = await SharedPreferences.getInstance();
-      final existing = prefs.getString('cached_med_$id');
-      if (existing == null) {
-        await prefs.setString('cached_med_$id', jsonEncode({
-          'id': '',
-          'name': medicineName,
-          'dosage': dosage,
-          'qty': 0,
-          'image_path': imagePath,
-        }));
-      }
+      await prefs.setString('cached_med_$id', jsonEncode({
+        'id': '',
+        'name': medicineName,
+        'dosage': dosage,
+        'qty': 0,
+        'image_path': imagePath,
+      }));
     } catch (e) {
       debugPrint("Error caching alarm med data: $e");
     }
@@ -137,7 +138,7 @@ class AlarmService {
     final snoozeTime =
         fromOriginal.isAfter(fromNow) ? fromOriginal : fromNow;
 
-    final snoozeId = originalId + 10000;
+    final snoozeId = originalId + kSnoozeOffset;
 
     await Alarm.set(
       alarmSettings: AlarmSettings(
@@ -178,232 +179,165 @@ class AlarmService {
     debugPrint("Snooze alarm set: ID=$snoozeId at $snoozeTime");
   }
 
-  /// Returns the end DateTime for a slot on a given date
-  DateTime getSlotEndTime(String slot, DateTime date, Map<String, dynamic> prefs) {
-    final endStr = prefs['${slot}_end'] ?? _defaultSlotEnd(slot);
-    final parts = endStr.split(':');
-    final hour = int.parse(parts[0]);
-    final minute = int.parse(parts[1]);
-    return DateTime(date.year, date.month, date.day, hour, minute);
-  }
-
-  /// 6A — Calculates alarm time for a given slot.
-  /// For 'custom' slots, uses the customTime directly.
-  /// For standard slots, uses the slot start time from preferences.
-  DateTime getAlarmTimeForSlot(
-    String slot,
-    TimeOfDay? customTime,
-    DateTime date,
-    Map<String, dynamic> prefs,
-  ) {
-    if (slot == 'custom' && customTime != null) {
-      return DateTime(date.year, date.month, date.day,
-          customTime.hour, customTime.minute);
-    }
-
-    final startStr = prefs['${slot}_start'] ?? _defaultSlotStart24(slot);
-    final parts = startStr.split(':');
-    final hour = int.parse(parts[0]);
-    final minute = int.parse(parts[1]);
-
-    return DateTime(date.year, date.month, date.day, hour, minute);
-  }
-
-  /// 6C — Schedules slot-based alarms with retry logic.
-  /// First alarm at slot_start + 20% of range duration,
-  /// then repeats every 8 minutes until slot_end.
-  Future<List<int>> scheduleSlotAlarms({
-    required String medicationId,
-    required String medicineName,
-    required String dosage,
-    required String? imagePath,
+  /// Schedules one alarm for an entire slot group of medicines.
+  /// Returns the alarm ID, or null if scheduling failed.
+  Future<int?> scheduleGroupSlotAlarm({
     required String slot,
-    required DateTime date,
-    required Map<String, dynamic> prefs,
-    TimeOfDay? customTime,
-    String? customTimeStr,
+    required String slotKey,
+    required DateTime alarmTime,
+    required List<String> medicineNames,
+    required String medicationIdsJson,
   }) async {
-    final List<int> scheduledIds = [];
-    final now = DateTime.now();
+    final alarmId = await _nextSlotAlarmId();
 
-    // FIX 1: Cancel previously scheduled slot alarms for this medicine+slot
-    try {
-      final prefsInst = await SharedPreferences.getInstance();
-      final cacheKey = 'slot_alarm_ids_${medicationId}_$slot';
-      final cachedIds = prefsInst.getStringList(cacheKey) ?? [];
-      for (final idStr in cachedIds) {
-        final id = int.tryParse(idStr);
-        if (id != null) {
-          await Alarm.stop(id);
-          debugPrint("  Cancelled old slot alarm ID=$id");
-        }
-      }
-    } catch (e) {
-      debugPrint("  Old slot alarm cleanup error: $e");
+    final title = _slotDisplayName(slotKey.split('_')[0]);
+    final body = medicineNames.length == 1
+        ? medicineNames.first
+        : '${medicineNames.take(3).join(', ')}'
+            '${medicineNames.length > 3 ? ' +${medicineNames.length - 3} more' : ''}';
+
+    final success = await Alarm.set(
+      alarmSettings: AlarmSettings(
+        id: alarmId,
+        dateTime: alarmTime,
+        assetAudioPath: 'assets/alarm.mp3',
+        loopAudio: true,
+        vibrate: true,
+        volumeSettings: VolumeSettings.fade(
+          volume: 1.0,
+          volumeEnforced: true,
+          fadeDuration: const Duration(seconds: 3),
+        ),
+        notificationSettings: NotificationSettings(
+          title: title,
+          body: body,
+          stopButton: null,
+        ),
+        warningNotificationOnKill: true,
+        androidFullScreenIntent: true,
+      ),
+    );
+
+    if (!success) return null;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('group_alarm_$alarmId', jsonEncode({
+      'slot': slot,
+      'slot_key': slotKey,
+      'alarm_time': alarmTime.toIso8601String(),
+      'medicine_names': medicineNames,
+      'medication_ids': jsonDecode(medicationIdsJson),
+      'is_retry': false,
+    }));
+
+    debugPrint('Group alarm set: ID=$alarmId slot=$slotKey at $alarmTime');
+    return alarmId;
+  }
+
+  /// Schedules a retry alarm for remaining unticked medicines in a slot.
+  Future<int?> scheduleRetryAlarm({
+    required String slot,
+    required String slotKey,
+    required DateTime retryTime,
+    required List<String> remainingMedicineNames,
+    required String remainingMedicationIdsJson,
+  }) async {
+    final alarmId = await _nextSlotAlarmId();
+
+    final title = '${_slotDisplayName(slotKey.split('_')[0])} - Reminder';
+    final body = remainingMedicineNames.length == 1
+        ? remainingMedicineNames.first
+        : '${remainingMedicineNames.length} medicines pending';
+
+    final success = await Alarm.set(
+      alarmSettings: AlarmSettings(
+        id: alarmId,
+        dateTime: retryTime,
+        assetAudioPath: 'assets/alarm.mp3',
+        loopAudio: true,
+        vibrate: true,
+        volumeSettings: VolumeSettings.fade(
+          volume: 1.0,
+          volumeEnforced: true,
+          fadeDuration: const Duration(seconds: 3),
+        ),
+        notificationSettings: NotificationSettings(
+          title: title,
+          body: body,
+          stopButton: null,
+        ),
+        warningNotificationOnKill: true,
+        androidFullScreenIntent: true,
+      ),
+    );
+
+    if (!success) return null;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('group_alarm_$alarmId', jsonEncode({
+      'slot': slot,
+      'slot_key': slotKey,
+      'alarm_time': retryTime.toIso8601String(),
+      'medicine_names': remainingMedicineNames,
+      'medication_ids': jsonDecode(remainingMedicationIdsJson),
+      'is_retry': true,
+    }));
+
+    debugPrint('Retry alarm set: ID=$alarmId slot=$slotKey at $retryTime');
+    return alarmId;
+  }
+
+  /// Cancels the active group alarm and retry alarm for a slot key.
+  Future<void> cancelSlotAlarms(String slotKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    final groupId = prefs.getInt('active_group_alarm_$slotKey');
+    final retryId = prefs.getInt('active_retry_alarm_$slotKey');
+
+    if (groupId != null) {
+      await Alarm.stop(groupId);
+      await prefs.remove('active_group_alarm_$slotKey');
+      await prefs.remove('group_alarm_$groupId');
     }
-
-    final slotStart = getAlarmTimeForSlot(slot, customTime, date, prefs);
-    final slotEnd = getSlotEndTime(slot, date, prefs);
-
-    debugPrint("=== SCHEDULE SLOT ALARMS ===");
-    debugPrint("Medicine: $medicineName | Slot: $slot | Date: $date");
-    debugPrint("Slot start: $slotStart | Slot end: $slotEnd | Now: $now");
-
-    final rangeMins = slotEnd.difference(slotStart).inMinutes;
-    debugPrint("Range: $rangeMins minutes");
-    if (rangeMins <= 0) {
-      debugPrint("SKIP: range <= 0 — no alarms scheduled");
-      return scheduledIds;
+    if (retryId != null) {
+      await Alarm.stop(retryId);
+      await prefs.remove('active_retry_alarm_$slotKey');
+      await prefs.remove('group_alarm_$retryId');
     }
-
-    // First alarm at slot_start + 20% of range
-    final firstAlarmOffset = (rangeMins * 0.2).round();
-    DateTime alarmTime = slotStart.add(Duration(minutes: firstAlarmOffset));
-    debugPrint("First alarm target: $alarmTime (slot_start + ${firstAlarmOffset}min)");
-
-    int loopCount = 0;
-    while (alarmTime.isBefore(slotEnd)) {
-      loopCount++;
-      final isFuture = alarmTime.isAfter(now.subtract(const Duration(minutes: 1)));
-      debugPrint("  Loop #$loopCount: alarmTime=$alarmTime isFuture=$isFuture");
-
-      // Don't schedule past alarms
-      if (isFuture) {
-        final alarmId = await _nextSlotAlarmId();
-        debugPrint("  -> Scheduling alarm ID=$alarmId at $alarmTime");
-
-        try {
-          final success = await scheduleAlarm(
-            id: alarmId,
-            medicineName: medicineName,
-            dosage: dosage,
-            imagePath: imagePath ?? '',
-            time: alarmTime,
-          );
-
-          if (success) {
-            // Cache slot info for alarm screen — ALWAYS overwrite
-            try {
-              final prefsInst = await SharedPreferences.getInstance();
-              final cacheKey = 'cached_med_$alarmId';
-              await prefsInst.setString(cacheKey, jsonEncode({
-                'id': medicationId,
-                'name': medicineName,
-                'dosage': dosage,
-                'qty': 0,
-                'image_path': imagePath ?? '',
-                'slot': slot,
-                'slot_index': _slotIndex(slot),
-                'scheduled_time': alarmTime.toIso8601String(),
-              }));
-              debugPrint("  -> Cache written for $cacheKey");
-            } catch (e) {
-              debugPrint("  -> Cache write FAILED: $e");
-            }
-
-            scheduledIds.add(alarmId);
-          } else {
-            debugPrint("  -> Alarm.set() returned false for ID=$alarmId — skipping");
-          }
-        } catch (e) {
-          debugPrint("  -> scheduleAlarm EXCEPTION for ID=$alarmId: $e");
-        }
-      }
-
-      alarmTime = alarmTime.add(const Duration(minutes: 8));
-    }
-
-    // FIX 1: Save new slot alarm IDs for future cancellation
-    try {
-      final prefsInst = await SharedPreferences.getInstance();
-      final cacheKey = 'slot_alarm_ids_${medicationId}_$slot';
-      await prefsInst.setStringList(cacheKey, scheduledIds.map((id) => id.toString()).toList());
-      debugPrint("  Saved ${scheduledIds.length} slot alarm IDs for $cacheKey");
-    } catch (e) {
-      debugPrint("  Save slot alarm IDs error: $e");
-    }
-
-    // Verify alarms are actually registered
-    try {
-      final activeAlarms = await Alarm.getAlarms();
-      final ourAlarms = activeAlarms.where((a) => scheduledIds.contains(a.id)).toList();
-      debugPrint("=== RESULT: ${scheduledIds.length} requested, ${ourAlarms.length} confirmed active ===");
-      for (final a in ourAlarms) {
-        debugPrint("  Active alarm: ID=${a.id} at ${a.dateTime}");
-      }
-    } catch (e) {
-      debugPrint("=== RESULT: ${scheduledIds.length} alarms scheduled (verify failed: $e) ===");
-    }
-    return scheduledIds;
   }
 
   /// Generates a unique alarm ID using a monotonic counter stored in SharedPreferences.
   /// Avoids hashCode collisions and is deterministic across isolates.
-  static Future<int> _nextSlotAlarmId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = prefs.getInt('alarm_id_counter') ?? 1000;
+  static const int _maxSlotAlarmId = 800000;
+
+static Future<int> _nextSlotAlarmId() async {
+  final prefs = await SharedPreferences.getInstance();
+    int current = prefs.getInt('alarm_id_counter') ?? 1000;
+    if (current >= _maxSlotAlarmId) {
+      current = 1000;
+      await prefs.setInt('alarm_id_counter', 1000);
+      debugPrint('⚠️ Alarm ID counter reset to avoid snooze ID collision');
+    }
     final next = current + 1;
-    await prefs.setInt('alarm_id_counter', next);
-    return next;
-  }
+  await prefs.setInt('alarm_id_counter', next);
+  return next;
+}
 
-  static int _slotIndex(String slot) {
+  String _slotDisplayName(String slot) {
     switch (slot) {
-      case 'morning': return 1;
-      case 'afternoon': return 2;
-      case 'evening': return 3;
-      case 'night': return 4;
-      case 'custom': return 5;
-      default: return 0;
+      case 'morning':
+        return 'Morning Medicines';
+      case 'afternoon':
+        return 'Afternoon Medicines';
+      case 'evening':
+        return 'Evening Medicines';
+      case 'night':
+        return 'Night Medicines';
+      default:
+        return 'Medicine Reminder';
     }
   }
 
-  static String _defaultSlotStart24(String slot) {
-    switch (slot) {
-      case 'morning': return '08:00';
-      case 'afternoon': return '12:00';
-      case 'evening': return '16:00';
-      case 'night': return '21:00';
-      default: return '08:00';
-    }
-  }
-
-  static String _defaultSlotEnd(String slot) {
-    switch (slot) {
-      case 'morning': return '09:30';
-      case 'afternoon': return '14:00';
-      case 'evening': return '18:00';
-      case 'night': return '22:30';
-      default: return '09:30';
-    }
-  }
-
-  /// Helper for non-alarm notifications if needed
-  Future<void> showNotification({
-    required int id,
-    required String title,
-    required String body,
-  }) async {
-    await notificationsPlugin.show(
-      id,
-      title,
-      body,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'alarm_channel',
-          'Alarm Notifications',
-          channelDescription: 'Critical medicine alarm notifications',
-          importance: Importance.max,
-          priority: Priority.max,
-          fullScreenIntent: true,
-          category: AndroidNotificationCategory.alarm,
-          visibility: NotificationVisibility.public,
-          playSound: true,
-          enableVibration: true,
-        ),
-      ),
-    );
-  }
+ 
 
   /// Show notification with action buttons for notification-only mode
   Future<void> showActionNotification({

@@ -88,7 +88,21 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
     if (name.isEmpty) return;
 
     final userId = _supabase.auth.currentUser?.id;
-    final handle = 'FAM-${Random().nextInt(900000) + 100000}';
+
+    String handle = ''; 
+    bool handleTaken = true; 
+    int handleAttempts = 0; 
+    while (handleTaken && handleAttempts < 5) { 
+      handle = 'FAM-${Random().nextInt(900000) + 100000}'; 
+      final existing = await _supabase 
+          .from('family_groups') 
+          .select('id') 
+          .eq('handle', handle) 
+          .maybeSingle(); 
+      handleTaken = existing != null; 
+      handleAttempts++; 
+    } 
+    if (handleTaken) throw Exception('Could not generate unique code. Try again.');
 
     try {
       // Create group
@@ -96,7 +110,10 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
         'name': name,
         'handle': handle,
         'created_by': userId,
-      }).select().single();
+      }).select().maybeSingle();
+      if (group == null) {
+        throw 'Failed to create family group — please retry';
+      }
 
       // Creator is ADMIN and automatically APPROVED
       await _supabase.from('family_members').insert({

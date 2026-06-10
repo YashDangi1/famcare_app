@@ -10,6 +10,7 @@ import '../services/alarm_service.dart';
 import '../services/notification_service.dart';
 import '../services/activity_service.dart';
 import '../utils/snackbar_utils.dart';
+import '../main.dart' show activeAlarmIdNotifier, kSnoozeOffset;
 
 class AlarmScreen extends StatefulWidget {
   final int alarmId;
@@ -45,14 +46,12 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
   Timer? _autoDismissTimer;
   bool _isActionTaken = false;
   bool _isProcessing = false;
-  late bool _hasImage;
   late AnimationController _bellController;
   late Animation<double> _bellAnimation;
 
   @override
   void initState() {
     super.initState();
-    _hasImage = widget.imagePath != null && File(widget.imagePath!).existsSync();
     // Bell ringing animation
     _bellController = AnimationController(
       vsync: this,
@@ -70,6 +69,10 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
     _bellController.dispose();
     _autoDismissTimer?.cancel();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+    // ✅ Reset alarm notifier so app doesn't stay in "alarm mode"
+    activeAlarmIdNotifier.value = null;
+
     super.dispose();
   }
 
@@ -256,7 +259,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
     try {
       await Alarm.stop(widget.alarmId);
 
-      final baseId = widget.isSnooze ? widget.alarmId - 10000 : widget.alarmId;
+      final baseId = widget.isSnooze ? widget.alarmId - kSnoozeOffset : widget.alarmId;
 
       await _alarmService.scheduleSnoozeAlarm(
         originalId: baseId,
@@ -318,8 +321,19 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                     border: Border.all(color: Colors.white.withOpacity(0.2), width: 2),
                   ),
                   child: ClipOval(
-                    child: _hasImage
-                        ? Image.file(File(widget.imagePath!), fit: BoxFit.cover)
+                    child: widget.imagePath != null && widget.imagePath!.isNotEmpty
+                        ? FutureBuilder<bool>(
+                            future: File(widget.imagePath!).exists(),
+                            builder: (context, snapshot) {
+                              if (snapshot.data == true) {
+                                return Image.file(
+                                  File(widget.imagePath!),
+                                  fit: BoxFit.cover,
+                                );
+                              }
+                              return const Icon(LucideIcons.pill, size: 80, color: Colors.white70);
+                            },
+                          )
                         : const Icon(LucideIcons.pill, size: 80, color: Colors.white70),
                   ),
                 ),

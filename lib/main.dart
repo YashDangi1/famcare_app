@@ -8,13 +8,17 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_fgbg/flutter_fgbg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'login_screen.dart';
-import 'main_app_shell.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 import 'screens/alarm_screen.dart';
 import 'services/alarm_service.dart';
 import 'splash_screen.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// Snooze offset: real alarm IDs are small; snoozes get originalId + kSnoozeOffset.
+// Any alarm with id > kSnoozeOffset is a snooze.
+const int kSnoozeOffset = 900000;
 
 // Guard against double-calling (early listener + AlarmService listener both fire)
 final Set<int> _handledAlarmIds = {};
@@ -22,9 +26,13 @@ final Set<int> _handledAlarmIds = {};
 // BUG 2: Guard against double-execution of notification action handlers
 final Set<int> _handledNotificationActionIds = {};
 
+// Tracks the alarm id that has a pending auto-stop notification scheduled.
+int? _pendingAutoStopId;
+
 // Global alarm state — when set, app shows ONLY the AlarmScreen (no home/nav)
 // Value is the alarm ID. Null = show normal app.
 final ValueNotifier<int?> activeAlarmIdNotifier = ValueNotifier(null);
+final ValueNotifier<String?> activeSlotAlarmNotifier = ValueNotifier(null);
 
 // Notifier for Due Soon panel refresh when medicine alarm time is edited
 final ValueNotifier<int> medicineUpdatedNotifier = ValueNotifier(0);
@@ -38,6 +46,10 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
   }
   _handledAlarmIds.add(settings.id);
   debugPrint("handleAlarmRing: ID=${settings.id}");
+
+  if (await _handleGroupAlarmIfNeeded(settings.id)) {
+    return;
+  }
 
   // Wait for navigator — up to 6 seconds (slow phones + cold start)
   int attempts = 0;
@@ -66,8 +78,8 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
     }
     final supabase = Supabase.instance.client;
 
-    final isSnooze = settings.id > 10000;
-    final originalId = isSnooze ? settings.id - 10000 : settings.id;
+    final isSnooze = settings.id > kSnoozeOffset;
+    final originalId = isSnooze ? settings.id - kSnoozeOffset : settings.id;
 
     // Check alarm style preference
     final prefs = await SharedPreferences.getInstance();
@@ -141,19 +153,37 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
       );
 
       final autoStopId = settings.id;
-      Timer(const Duration(minutes: 30), () async {
-        if (_handledNotificationActionIds.contains(autoStopId)) return;
-        try {
-          final activeAlarms = await Alarm.getAlarms();
-          final stillRinging = activeAlarms.any((a) => a.id == autoStopId);
-          if (stillRinging) {
-            await Alarm.stop(autoStopId);
-            await _logAsMissed(autoStopId);
-          }
-        } catch (e) {
-          debugPrint("Auto-stop error: $e");
-        }
-      });
+      final medicineName = med['name'] ?? 'Medicine';
+
+      // Persist expiry time so startup check can catch missed doses if app is killed
+      try {
+        final expiryTime = DateTime.now().add(const Duration(minutes: 30));
+        await prefs.setString('auto_stop_expiry_$autoStopId', expiryTime.toIso8601String());
+        await prefs.setString('auto_stop_medname_$autoStopId', medicineName);
+
+        // Schedule a native auto-stop notification 30 min later.
+        // This survives app kill; a Dart Timer would not.
+        final tzExpiry = tz.TZDateTime.from(expiryTime, tz.local);
+        await AlarmService().notificationsPlugin.zonedSchedule(
+          autoStopId + 20000, // unique notification ID offset from alarm ID
+          'Missed Dose',
+          '$medicineName was not taken',
+          tzExpiry,
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'missed_dose_channel',
+              'Missed Dose Alerts',
+              channelDescription: 'Alerts for missed medications',
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+          ),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (e) {
+        debugPrint("Auto-stop schedule error: $e");
+      }
 
       return;
     }
@@ -188,6 +218,10 @@ Future<void> handleAlarmRingById(int alarmId) async {
   }
   _handledAlarmIds.add(alarmId);
 
+  if (await _handleGroupAlarmIfNeeded(alarmId)) {
+    return;
+  }
+
   // Check preference — don't open AlarmScreen in notification-only mode
   final prefs = await SharedPreferences.getInstance();
   final isFullScreen = prefs.getBool('alarm_style_fullscreen') ?? true;
@@ -209,12 +243,50 @@ Future<void> handleAlarmRingById(int alarmId) async {
   activeAlarmIdNotifier.value = alarmId;
 }
 
+Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
+  final prefs = await SharedPreferences.getInstance();
+  final groupData = prefs.getString('group_alarm_$alarmId');
+  if (groupData == null) return false;
+
+  debugPrint('Group slot alarm detected: ID=$alarmId');
+  await Alarm.stop(alarmId);
+
+  final decoded = jsonDecode(groupData) as Map<String, dynamic>;
+  final slotKey = decoded['slot_key'] as String?;
+  activeSlotAlarmNotifier.value = slotKey;
+
+  // Persist so startup can catch it if navigator isn't ready (killed state)
+  try {
+    final startupPrefs = await SharedPreferences.getInstance();
+    if (slotKey != null) {
+      await startupPrefs.setString('pending_group_slot_alarm', slotKey);
+    }
+  } catch (_) {}
+
+  int attempts = 0;
+  while (navigatorKey.currentState == null && attempts < 20) {
+    await Future.delayed(const Duration(milliseconds: 300));
+    attempts++;
+  }
+
+  if (navigatorKey.currentState != null) {
+    // Clear pending flag since we navigated
+    try {
+      final clearPrefs = await SharedPreferences.getInstance();
+      await clearPrefs.remove('pending_group_slot_alarm');
+    } catch (_) {}
+    navigatorKey.currentState!.pushNamedAndRemoveUntil('/', (route) => false);
+  }
+  return true;
+}
+
 // Handle notification action button taps (background — no UI)
 // @pragma required for flutter_local_notifications background callback
 @pragma('vm:entry-point')
 void _onNotificationResponse(NotificationResponse response) async {
   final actionId = response.actionId ?? '';
-  debugPrint("=== NOTIFICATION RESPONSE === actionId: $actionId, payload: ${response.payload}");
+  final payload = response.payload ?? '';
+  debugPrint("=== NOTIFICATION RESPONSE === actionId: $actionId, payload: $payload");
 
   if (actionId.startsWith('took_it_')) {
     final alarmId = int.tryParse(actionId.replaceFirst('took_it_', ''));
@@ -222,6 +294,20 @@ void _onNotificationResponse(NotificationResponse response) async {
   } else if (actionId.startsWith('take_later_')) {
     final alarmId = int.tryParse(actionId.replaceFirst('take_later_', ''));
     if (alarmId != null) await _handleNotificationTakeLater(alarmId);
+  } else if (payload.startsWith('auto_stop:')) {
+    // Auto-stop notification fired: stop the ringing alarm + log missed dose.
+    final targetId = int.tryParse(payload.replaceFirst('auto_stop:', ''));
+    if (targetId != null) {
+      try {
+        await Alarm.stop(targetId);
+        await _logAsMissed(targetId);
+        final cleanPrefs = await SharedPreferences.getInstance();
+        await cleanPrefs.remove('auto_stop_expiry_$targetId');
+      } catch (e) {
+        debugPrint("Auto-stop callback error: $e");
+      }
+      _pendingAutoStopId = null;
+    }
   }
 }
 
@@ -256,8 +342,8 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
     }
 
     // Find medication by alarm ID
-    final isSnooze = alarmId > 10000;
-    final originalId = isSnooze ? alarmId - 10000 : alarmId;
+    final isSnooze = alarmId > kSnoozeOffset;
+    final originalId = isSnooze ? alarmId - kSnoozeOffset : alarmId;
 
     Map<String, dynamic>? med;
     med = await supabase.from('medications').select('*').eq('alarm_id1', originalId).maybeSingle().timeout(const Duration(seconds: 5));
@@ -306,6 +392,8 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
     try {
       await prefs.remove('cached_med_$alarmId');
       await prefs.remove('alarm_scheduled_time_$alarmId');
+      await prefs.remove('auto_stop_expiry_$alarmId');
+      _handledNotificationActionIds.remove(alarmId);
     } catch (_) {}
 
     debugPrint("Notification 'I Took It' handled for alarm $alarmId");
@@ -345,8 +433,8 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
     }
 
     // Find medication by alarm ID
-    final isSnooze = alarmId > 10000;
-    final originalId = isSnooze ? alarmId - 10000 : alarmId;
+    final isSnooze = alarmId > kSnoozeOffset;
+    final originalId = isSnooze ? alarmId - kSnoozeOffset : alarmId;
 
     Map<String, dynamic>? med;
     med = await supabase.from('medications').select('*').eq('alarm_id1', originalId).maybeSingle().timeout(const Duration(seconds: 5));
@@ -366,7 +454,7 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
       if (med['alarm_id3'] == originalId) slot = 3;
     }
 
-    // BUG 3: Schedule snooze from ORIGINAL scheduled time, not DateTime.now()
+    // Schedule snooze from ORIGINAL scheduled time, not DateTime.now()
     final prefs = await SharedPreferences.getInstance();
     final scheduledStr = prefs.getString('alarm_scheduled_time_$alarmId');
     final scheduledTime = scheduledStr != null
@@ -379,7 +467,7 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
       originalTime: scheduledTime,
     );
 
-    // Log as snoozed
+    // Log as snoozed — use original scheduled time, not DateTime.now()
     if (userId != null && medId.isNotEmpty) {
       await supabase.from('medicine_logs').insert({
         'user_id': userId,
@@ -388,16 +476,17 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
         'dosage': dosage,
         'status': 'snoozed',
         'alarm_slot': slot,
-        'scheduled_time': DateTime.now().toIso8601String(),
+        'scheduled_time': scheduledTime.toIso8601String(),
         'created_at': DateTime.now().toIso8601String(),
       });
     }
 
     // Clean up cache
     try {
-      final prefs = await SharedPreferences.getInstance();
       await prefs.remove('cached_med_$alarmId');
       await prefs.remove('alarm_scheduled_time_$alarmId');
+      await prefs.remove('auto_stop_expiry_$alarmId');
+      _handledNotificationActionIds.remove(alarmId);
     } catch (_) {}
 
     debugPrint("Notification 'Take Later' handled for alarm $alarmId");
@@ -406,7 +495,37 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
   }
 }
 
-/// BUG 7: Log alarm as missed when auto-stop timer fires (no action taken)
+/// Check for alarms that expired while app was killed (CRITICAL 3 fix)
+Future<void> _checkExpiredAutoStopAlarms() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys().where((k) => k.startsWith('auto_stop_expiry_')).toList();
+
+    for (final key in keys) {
+      final alarmIdStr = key.replaceFirst('auto_stop_expiry_', '');
+      final alarmId = int.tryParse(alarmIdStr);
+      if (alarmId == null) continue;
+
+      final expiryStr = prefs.getString(key);
+      if (expiryStr == null) continue;
+
+      final expiry = DateTime.parse(expiryStr);
+      if (DateTime.now().isAfter(expiry)) {
+        // Timer expired while app was killed — check if still unhandled
+        if (!_handledNotificationActionIds.contains(alarmId)) {
+          debugPrint("Startup: expired auto-stop alarm $alarmId — logging as missed");
+          await _logAsMissed(alarmId);
+          _handledNotificationActionIds.add(alarmId);
+        }
+        await prefs.remove(key);
+      }
+    }
+  } catch (e) {
+    debugPrint("Error checking expired auto-stop alarms: $e");
+  }
+}
+
+/// Log alarm as missed when auto-stop timer fires (no action taken)
 Future<void> _logAsMissed(int alarmId) async {
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -457,6 +576,7 @@ const _alarmChannel = MethodChannel('com.famcare/alarm');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tz_data.initializeTimeZones();
 
   // STEP 1: Check for alarm FIRST — lightweight, fast.
   bool alarmMode = false;
@@ -474,6 +594,13 @@ void main() async {
       }
       prefs.remove('ringing_alarm_id');
     }
+    // Check for pending group slot alarm (killed-state group alarm that couldn't navigate)
+    final pendingSlot = prefs.getString('pending_group_slot_alarm');
+    if (pendingSlot != null) {
+      debugPrint("STARTUP: Found pending group slot alarm: $pendingSlot");
+      activeSlotAlarmNotifier.value = pendingSlot;
+      prefs.remove('pending_group_slot_alarm');
+    }
   } catch (e) {
     debugPrint("Error checking stored alarm ID: $e");
   }
@@ -484,16 +611,28 @@ void main() async {
   // STEP 3: Supabase init — runs AFTER runApp so UI shows instantly.
   // In alarm mode, _AlarmScreenWrapper shows loading screen while this runs.
   await dotenv.load(fileName: '.env');
-  try {
-    await Supabase.initialize(
-      url: dotenv.env['SUPABASE_URL'] ?? '',
-      anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
-    );
-    _supabaseReady = true;
-  } catch (e) {
-    debugPrint("Supabase Init Error: $e");
-    _supabaseReady = false;
+  int supabaseRetries = 0;
+  while (!_supabaseReady && supabaseRetries < 3) {
+    try {
+      await Supabase.initialize(
+        url: dotenv.env['SUPABASE_URL'] ?? '',
+        anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
+      );
+      _supabaseReady = true;
+    } catch (e) {
+      supabaseRetries++;
+      debugPrint('Supabase init attempt $supabaseRetries failed: $e');
+      if (supabaseRetries < 3) {
+        await Future.delayed(Duration(seconds: supabaseRetries * 2));
+      }
+    }
   }
+  if (!_supabaseReady) {
+    debugPrint('⚠️ Supabase failed after 3 attempts — app will work offline');
+  }
+
+  // Check for missed alarms that expired while app was killed
+  _checkExpiredAutoStopAlarms();
 
   // STEP 4: Post-launch init.
   // In alarm mode: skip ALL alarm init — AlarmScreen wrapper handles everything.
@@ -511,6 +650,16 @@ void main() async {
 
     await Alarm.init();
     await AlarmService().init();
+
+    Timer.periodic(const Duration(hours: 1), (_) {
+      if (_handledAlarmIds.length > 200) {
+        _handledAlarmIds.clear();
+        debugPrint('Pruned _handledAlarmIds');
+      }
+      if (_handledNotificationActionIds.length > 200) {
+        _handledNotificationActionIds.clear();
+      }
+    });
 
     // Re-register notification callback directly (must be top-level @pragma function)
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -649,6 +798,8 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
+// End of file
+
 /// Observer that resets the global alarm state when AlarmScreen is popped
 class _AlarmNavObserver extends NavigatorObserver {
   @override
@@ -672,11 +823,23 @@ class _AlarmScreenWrapper extends StatefulWidget {
 
 class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
   Map<String, dynamic>? _med;
+  DateTime _scheduledTime = DateTime.now();
 
   @override
   void initState() {
     super.initState();
     _loadFromCacheInstantly();
+    _loadScheduledTime();
+  }
+
+  Future<void> _loadScheduledTime() async {
+    try {
+      final alarms = await Alarm.getAlarms();
+      final match = alarms.where((a) => a.id == widget.alarmId).toList();
+      if (match.isNotEmpty && mounted) {
+        setState(() => _scheduledTime = match.first.dateTime);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadFromCacheInstantly() async {
@@ -727,8 +890,8 @@ class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
     }
     try {
       final supabase = Supabase.instance.client;
-      final isSnooze = widget.alarmId > 10000;
-      final originalId = isSnooze ? widget.alarmId - 10000 : widget.alarmId;
+      final isSnooze = widget.alarmId > kSnoozeOffset;
+      final originalId = isSnooze ? widget.alarmId - kSnoozeOffset : widget.alarmId;
 
       final responses = await Future.wait<Object?>([
         supabase.from('medications').select('*').eq('alarm_id1', originalId).maybeSingle(),
@@ -770,7 +933,7 @@ class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
       );
     }
 
-    final isSnooze = widget.alarmId > 10000;
+    final isSnooze = widget.alarmId > kSnoozeOffset;
     final slot = (_med!['slot'] as int?) ?? 1;
 
     return Navigator(
@@ -786,7 +949,7 @@ class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
           qty: int.tryParse(_med!['qty']?.toString() ?? '0') ?? 0,
           medicationId: _med!['id'] ?? '',
           alarmSlot: slot,
-          scheduledTime: DateTime.now(),
+          scheduledTime: _scheduledTime,
           imagePath: _med!['image_path'],
         ),
       ),
@@ -794,13 +957,4 @@ class _AlarmScreenWrapperState extends State<_AlarmScreenWrapper> {
   }
 }
 
-class AuthCheck extends StatelessWidget {
-  const AuthCheck({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final session = Supabase.instance.client.auth.currentSession;
-    return session != null ? const MainAppShell() : const LoginScreen();
-  }
-}
 

@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -68,17 +69,21 @@ class _MedsScreenState extends State<MedsScreen> {
       // Load slot preferences for card headers
       final slotPrefs = await SlotPreferencesService().getPreferences();
 
+      // Cache image existence to avoid sync I/O in build()
+      final List<Medicine> meds = (data as List).map((m) => Medicine.fromJson(m)).toList();
+      final Set<String> existingPaths = {};
+      for (final m in meds) {
+        if (m.imagePath != null && m.imagePath!.isNotEmpty && await File(m.imagePath!).exists()) {
+          existingPaths.add(m.imagePath!);
+        }
+      }
+
       if (mounted) {
         setState(() {
-          _medications = (data as List).map((m) => Medicine.fromJson(m)).toList();
+          _medications = meds;
           _slotPrefs = slotPrefs;
-          // Cache image existence to avoid sync I/O in build()
           _existingImagePaths.clear();
-          for (final m in _medications) {
-            if (m.imagePath != null && m.imagePath!.isNotEmpty && File(m.imagePath!).existsSync()) {
-              _existingImagePaths.add(m.imagePath!);
-            }
-          }
+          _existingImagePaths.addAll(existingPaths);
           _isLoading = false;
         });
       }
@@ -91,7 +96,7 @@ class _MedsScreenState extends State<MedsScreen> {
   // ==========================================
   // ➕ ADD/EDIT MEDICINE DIALOG (Redesigned)
   // ==========================================
-  void _showAddEditDialog({Medicine? existingMed}) {
+  Future<void> _showAddEditDialog({Medicine? existingMed}) async {
     final nameController = TextEditingController(text: existingMed?.name);
     final dosageController = TextEditingController(text: existingMed?.dosage ?? "1 tablet");
     final durationController = TextEditingController(text: (existingMed?.durationDays ?? 7).toString());
@@ -120,14 +125,16 @@ class _MedsScreenState extends State<MedsScreen> {
 
     DateTime startDate = existingMed?.startDate ?? DateTime.now();
     File? selectedImage;
-    if (existingMed?.imagePath != null && File(existingMed!.imagePath!).existsSync()) {
+    if (existingMed?.imagePath != null && await File(existingMed!.imagePath!).exists()) {
       selectedImage = File(existingMed.imagePath!);
     }
 
     void recalcQty() {
-      final slotCount = selectedSlots.isEmpty ? 1 : selectedSlots.length;
+      final standardSlotCount = selectedSlots.where((s) => s != 'custom').length;
+      final customSlotCount = selectedSlots.contains('custom') ? customAlarmTimes.length : 0;
+      final slotCount = (standardSlotCount + customSlotCount).clamp(1, 999);
       final dur = int.tryParse(durationController.text) ?? 1;
-      final everyX = int.tryParse(everyXDaysController.text) ?? 1;
+      final everyX = max(1, int.tryParse(everyXDaysController.text) ?? 1);
       int qty;
       if (scheduleType == 'specific_dates') {
         qty = slotCount * specificDates.length;
@@ -145,13 +152,16 @@ class _MedsScreenState extends State<MedsScreen> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) {
           final durDays = int.tryParse(durationController.text) ?? 1;
-          final everyX = int.tryParse(everyXDaysController.text) ?? 1;
+          final everyX = max(1, int.tryParse(everyXDaysController.text) ?? 1);
           DateTime endDate;
           if (scheduleType == 'specific_dates' && specificDates.isNotEmpty) {
             endDate = DateTime.parse(specificDates.last);
           } else if (scheduleType == 'every_x_days') {
-            final totalDays = (durDays / everyX).ceil() * everyX;
-            endDate = startDate.add(Duration(days: totalDays)).subtract(const Duration(days: 1));
+            // Number of "every X days" doses that fit in the duration window,
+            // then add the final gap so the last dose falls inside the window.
+            final doses = (durDays / everyX).ceil();
+            final totalDays = doses > 0 ? (doses - 1) * everyX : 0;
+            endDate = startDate.add(Duration(days: totalDays));
           } else {
             endDate = startDate.add(Duration(days: durDays)).subtract(const Duration(days: 1));
           }
@@ -329,7 +339,7 @@ class _MedsScreenState extends State<MedsScreen> {
                           ? SizedBox(
                               width: 60,
                               height: 36,
-                              child: TextField(
+                              child: TextFormField(
                                 controller: everyXDaysController,
                                 keyboardType: TextInputType.number,
                                 textAlign: TextAlign.center,
@@ -339,6 +349,11 @@ class _MedsScreenState extends State<MedsScreen> {
                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                                   isDense: true,
                                 ),
+                                validator: (v) {
+                                  final n = int.tryParse(v ?? '');
+                                  if (n == null || n <= 0) return 'Must be 1 or more';
+                                  return null;
+                                },
                                 onChanged: (_) => setDialogState(() => recalcQty()),
                               ),
                             )
@@ -357,22 +372,12 @@ class _MedsScreenState extends State<MedsScreen> {
                           ? IconButton(
                               icon: const Icon(LucideIcons.calendar, size: 20, color: Color(0xFF0EA5E9)),
                               onPressed: () async {
-                                final picked = await showDatePicker(
-                                  context: dialogContext,
-                                  initialDate: DateTime.now(),
-                                  firstDate: DateTime.now(),
-                                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                                await _showMultiDatePicker(
+                                  dialogContext,
+                                  specificDates,
+                                  setDialogState,
+                                  recalcQty,
                                 );
-                                if (picked != null) {
-                                  final dateStr = DateFormat('yyyy-MM-dd').format(picked);
-                                  setDialogState(() {
-                                    if (!specificDates.contains(dateStr)) {
-                                      specificDates.add(dateStr);
-                                      specificDates.sort();
-                                    }
-                                    recalcQty();
-                                  });
-                                }
                               },
                             )
                           : null,
@@ -591,6 +596,199 @@ class _MedsScreenState extends State<MedsScreen> {
     );
   }
 
+  Future<void> _showMultiDatePicker(
+    BuildContext context,
+    List<String> currentDates,
+    StateSetter setDialogState,
+    VoidCallback recalcQty,
+  ) async {
+    final selected = currentDates.map((d) => DateTime.parse(d)).toSet();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, sheetState) {
+          final dates = List.generate(90, (i) => DateTime.now().add(Duration(days: i)));
+
+          return DraggableScrollableSheet(
+            initialChildSize: 0.6,
+            maxChildSize: 0.9,
+            minChildSize: 0.4,
+            expand: false,
+            builder: (_, scrollCtrl) => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Select Dates',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${selected.length} selected',
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      _quickSelectChip('Today', [DateTime.now()], selected, sheetState),
+                      _quickSelectChip(
+                        'This week',
+                        List.generate(7, (i) => DateTime.now().add(Duration(days: i))),
+                        selected,
+                        sheetState,
+                      ),
+                      _quickSelectChip(
+                        'Next 30 days',
+                        List.generate(30, (i) => DateTime.now().add(Duration(days: i))),
+                        selected,
+                        sheetState,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: GridView.builder(
+                    controller: scrollCtrl,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 7,
+                      mainAxisSpacing: 4,
+                      crossAxisSpacing: 4,
+                      childAspectRatio: 1,
+                    ),
+                    itemCount: dates.length,
+                    itemBuilder: (_, i) {
+                      final date = dates[i];
+                      final isSelected = selected.any((s) => _isSameDate(s, date));
+                      final isToday = _isSameDate(date, DateTime.now());
+                      return GestureDetector(
+                        onTap: () {
+                          sheetState(() {
+                            if (isSelected) {
+                              selected.removeWhere((s) => _isSameDate(s, date));
+                            } else {
+                              selected.add(DateTime(date.year, date.month, date.day));
+                            }
+                          });
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? const Color(0xFF0EA5E9)
+                                : isToday
+                                    ? Colors.blue[50]
+                                    : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: isToday
+                                ? Border.all(color: const Color(0xFF0EA5E9))
+                                : null,
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                DateFormat('d').format(date),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: isSelected ? Colors.white : Colors.black87,
+                                ),
+                              ),
+                              Text(
+                                DateFormat('MMM').format(date),
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: isSelected ? Colors.white70 : Colors.grey[600],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    8,
+                    16,
+                    MediaQuery.of(ctx).viewInsets.bottom + 16,
+                  ),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: selected.isEmpty
+                          ? null
+                          : () {
+                              final sorted = selected.toList()..sort();
+                              setDialogState(() {
+                                currentDates
+                                  ..clear()
+                                  ..addAll(sorted.map((d) => DateFormat('yyyy-MM-dd').format(d)));
+                                recalcQty();
+                              });
+                              Navigator.pop(ctx);
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0EA5E9),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text(
+                        selected.isEmpty ? 'Select dates' : 'Confirm ${selected.length} dates',
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _quickSelectChip(
+    String label,
+    List<DateTime> dates,
+    Set<DateTime> selected,
+    StateSetter sheetState,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ActionChip(
+        label: Text(label),
+        onPressed: () {
+          sheetState(() {
+            for (final date in dates) {
+              selected.add(DateTime(date.year, date.month, date.day));
+            }
+          });
+        },
+      ),
+    );
+  }
+
+  bool _isSameDate(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
   Future<void> _handleSave({
     BuildContext? dialogContext,
     Medicine? existingMed,
@@ -659,165 +857,66 @@ class _MedsScreenState extends State<MedsScreen> {
       // frequency = total slots for backward compat
       int frequency = alarmTimeStrings.length;
 
-      final med = Medicine(
-        id: existingMed?.id,
-        userId: userId,
-        name: name,
-        dosage: dosage,
-        frequency: frequency,
-        time1: time1,
-        time2: time2,
-        time3: time3,
-        startDate: start,
-        durationDays: scheduleType == 'specific_dates' ? specificDates.length : dur,
-        qty: qty,
-        counter: existingMed?.counter ?? 0,
-        isActive: true,
-        isTaken: existingMed?.isTaken ?? false,
-        imagePath: imagePath,
-        slotTypes: selectedSlots,
-        customTimes: customAlarmTimes.map((t) => _formatTimeOfDay(t)).toList(),
-        scheduleType: scheduleType,
-        everyXDays: everyXDays,
-        specificDates: specificDates,
-        notes: notes,
-      );
 
-      // Cancel old alarms if editing
-      if (existingMed != null) {
-        await _alarmService.cancelAlarmsForMedicine([
-          existingMed.alarmId1,
-          existingMed.alarmId2,
-          existingMed.alarmId3,
-        ]);
-      }
-
-      // 6C + 6D — Schedule slot-based alarms with retry logic
-      int? aid1, aid2, aid3;
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final startDateOnly = DateTime(med.startDate.year, med.startDate.month, med.startDate.day);
-      final endDateOnly = DateTime(med.endDate.year, med.endDate.month, med.endDate.day);
-
-      debugPrint("=== ALARM SCHEDULING DEBUG ===");
-      debugPrint("Med: ${med.name} | ID: ${med.id} | isPaused: ${med.isPaused}");
-      debugPrint("Selected slots: $selectedSlots");
-      debugPrint("Schedule type: ${med.scheduleType} | isActive: ${med.isActive}");
-      debugPrint("Start: $startDateOnly | End: $endDateOnly | Today: $today");
-      debugPrint("Date in range: ${(today.isAfter(startDateOnly) || today.isAtSameMomentAs(startDateOnly)) && (today.isBefore(endDateOnly) || today.isAtSameMomentAs(endDateOnly))}");
-      debugPrint("isActiveOnDate(today): ${med.isActiveOnDate(today)}");
-
-      if ((today.isAfter(startDateOnly) || today.isAtSameMomentAs(startDateOnly)) &&
-          (today.isBefore(endDateOnly) || today.isAtSameMomentAs(endDateOnly))) {
-        // 6D — Check schedule type and pause status
-        if (med.isActiveOnDate(today) && !med.isPaused) {
-          final alarmSlotPrefs = await SlotPreferencesService().getPreferences();
-          debugPrint("Slot prefs loaded: $alarmSlotPrefs");
-          int slotCounter = 0;
-
-          for (final slot in selectedSlots) {
-            if (slot == 'custom') {
-              for (int i = 0; i < customAlarmTimes.length; i++) {
-                final customTod = customAlarmTimes[i];
-                final customTimeLabel =
-                    '${customTod.hour.toString().padLeft(2, '0')}:${customTod.minute.toString().padLeft(2, '0')}';
-                final ids = await _alarmService.scheduleSlotAlarms(
-                  medicationId: med.id ?? '',
-                  medicineName: med.name,
-                  dosage: med.dosage,
-                  imagePath: med.imagePath,
-                  slot: 'custom',
-                  date: today,
-                  prefs: alarmSlotPrefs,
-                  customTime: customTod,
-                );
-
-                debugPrint('Custom time ${i + 1}: $customTimeLabel -> '
-                    '${ids.length} alarms scheduled');
-                if (ids.isNotEmpty && slotCounter < 3) {
-                  slotCounter++;
-                  if (slotCounter == 1) aid1 = ids.first;
-                  if (slotCounter == 2) aid2 = ids.first;
-                  if (slotCounter == 3) aid3 = ids.first;
-                }
-              }
-            } else {
-              slotCounter++;
-              final ids = await _alarmService.scheduleSlotAlarms(
-                medicationId: med.id ?? '',
-                medicineName: med.name,
-                dosage: med.dosage,
-                imagePath: med.imagePath,
-                slot: slot,
-                date: today,
-                prefs: alarmSlotPrefs,
-              );
-
-              debugPrint("Slot '$slot' -> ${ids.length} alarms scheduled, first ID: ${ids.isNotEmpty ? ids.first : 'none'}");
-
-              // Store first alarm ID per slot for backward compat
-              if (ids.isNotEmpty) {
-                if (slotCounter == 1) aid1 = ids.first;
-                if (slotCounter == 2) aid2 = ids.first;
-                if (slotCounter == 3) aid3 = ids.first;
-              }
-            }
-          }
-        } else {
-          debugPrint("SKIP: isActiveOnDate=false or isPaused=true — no alarms scheduled");
-        }
+      final durationDays = scheduleType == 'specific_dates' ? specificDates.length : dur;
+      DateTime end;
+      if (scheduleType == 'specific_dates' && specificDates.isNotEmpty) {
+        end = DateTime.parse(specificDates.last);
       } else {
-        debugPrint("SKIP: today not in date range — no alarms scheduled");
+        end = start.add(Duration(days: durationDays - 1));
       }
-      // FIX 1: When slot system is active, cancel old legacy alarms and null out IDs
-      if (selectedSlots.isNotEmpty) {
-        if (existingMed?.alarmId1 != null) {
-          await _alarmService.cancelAlarm(existingMed!.alarmId1!);
-        }
-        if (existingMed?.alarmId2 != null) {
-          await _alarmService.cancelAlarm(existingMed!.alarmId2!);
-        }
-        if (existingMed?.alarmId3 != null) {
-          await _alarmService.cancelAlarm(existingMed!.alarmId3!);
-        }
-        aid1 = null;
-        aid2 = null;
-        aid3 = null;
-        debugPrint("FIX 1: Cancelled legacy alarm IDs, using slot system only");
-      }
+      final medData = {
+        'user_id': userId,
+        'name': name,
+        'dosage': dosage,
+        'frequency': frequency,
+        'time1': time1,
+        'time2': time2,
+        'time3': time3,
+        'alarm_id1': null,
+        'alarm_id2': null,
+        'alarm_id3': null,
+        'start_date': start.toIso8601String().split('T')[0],
+        'end_date': end.toIso8601String().split('T')[0],
+        'duration_days': durationDays,
+        'qty': qty,
+        'counter': existingMed?.counter ?? 0,
+        'is_active': true,
+        'is_taken': existingMed?.isTaken ?? false,
+        'image_path': imagePath,
+        'slot_types': selectedSlots,
+        'custom_times': customAlarmTimes.map((t) {
+          final h = t.hour.toString().padLeft(2, '0');
+          final m = t.minute.toString().padLeft(2, '0');
+          return '$h:$m'; // "08:00" — 24hr, locale-independent
+        }).toList(),
+        'schedule_type': scheduleType,
+        'every_x_days': everyXDays,
+        'specific_dates': specificDates,
+        'notes': notes,
+        'is_paused': existingMed?.isPaused ?? false,
+        'low_stock_alerted': existingMed?.lowStockAlerted ?? false,
+        'group_alarm_ids': {},
+      };
 
-      debugPrint("=== FINAL: aid1=$aid1 aid2=$aid2 aid3=$aid3 ===");
-
-      final finalMed = Medicine(
-        id: med.id,
-        userId: med.userId,
-        name: med.name,
-        dosage: med.dosage,
-        frequency: med.frequency,
-        time1: med.time1,
-        time2: med.time2,
-        time3: med.time3,
-        alarmId1: aid1,
-        alarmId2: aid2,
-        alarmId3: aid3,
-        startDate: med.startDate,
-        durationDays: med.durationDays,
-        qty: med.qty,
-        counter: med.counter,
-        isActive: med.isActive,
-        isTaken: med.isTaken,
-        imagePath: med.imagePath,
-        slotTypes: med.slotTypes,
-        customTimes: med.customTimes,
-        scheduleType: med.scheduleType,
-        everyXDays: med.everyXDays,
-        specificDates: med.specificDates,
-        notes: med.notes,
-      );
-
-      if (existingMed == null) {
-        await _supabase.from('medications').insert(finalMed.toJson());
-        try {
+      String realMedId;
+      if (existingMed?.id != null) {
+        await _supabase.from('medications').update(medData).eq('id', existingMed!.id!);
+        realMedId = existingMed.id!;
+      } else {
+        final response = await _supabase
+            .from('medications')
+            .insert(medData)
+            .select('id')
+            .maybeSingle();
+        if (response == null) {
+          throw Exception('Save failed — please retry');
+        }
+        realMedId = response['id']?.toString() ?? '';
+        if (realMedId.isEmpty) {
+          throw Exception('Save returned no ID');
+        }
+                try {
           await ActivityService.log(
             actionType: 'MEDICINE_ADDED',
             description: 'Added a new medicine: $name',
@@ -825,8 +924,23 @@ class _MedsScreenState extends State<MedsScreen> {
         } catch (e) {
           debugPrint('Log error: $e');
         }
-      } else {
-        await _supabase.from('medications').update(finalMed.toJson()).eq('id', existingMed.id!);
+      }
+
+      if (existingMed != null) {
+        for (final slot in existingMed.slotTypes) {
+          if (slot == 'custom') {
+            for (int i = 0; i < existingMed.customTimes.length; i++) {
+              await _alarmService.cancelSlotAlarms('custom_${existingMed.id}_$i');
+            }
+          } else {
+            await _alarmService.cancelSlotAlarms(slot);
+          }
+        }
+        await _alarmService.cancelAlarmsForMedicine([
+          existingMed.alarmId1,
+          existingMed.alarmId2,
+          existingMed.alarmId3,
+        ]);
       }
 
       if (mounted) {
@@ -837,6 +951,7 @@ class _MedsScreenState extends State<MedsScreen> {
         AppSnackBar.showSuccess(context, "Medicine saved successfully!");
         medicineUpdatedNotifier.value++;
       }
+      debugPrint('Medicine saved with ID=$realMedId; group alarm reschedule requested');
     } catch (e) {
       debugPrint("Save Error: $e");
       if (mounted) AppSnackBar.showError(context, "Failed to save: $e");
@@ -1294,10 +1409,13 @@ class _MedsScreenState extends State<MedsScreen> {
             secondChild: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               child: Column(
-                children: meds.map((med) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _buildMedicineCard(med),
-                )).toList(),
+                children: meds.map((med) {
+                  final isPrimarySlot = med.slotTypes.isEmpty || med.slotTypes.first == slot;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _buildMedicineCard(med, isPrimarySlot: isPrimarySlot),
+                  );
+                }).toList(),
               ),
             ),
             crossFadeState: isExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
@@ -1344,23 +1462,37 @@ class _MedsScreenState extends State<MedsScreen> {
     return '$hour12:${m.toString().padLeft(2, '0')} $period';
   }
 
-  String _formatMedicineChipTime(String timeStr, BuildContext context) {
+  // HATAO purana method, LAGAO yeh:
+String _formatMedicineChipTime(String timeStr, BuildContext context) {
+  try {
     final trimmed = timeStr.trim();
-
-    try {
-      final parsed = DateFormat('hh:mm a').parseStrict(trimmed);
-      return TimeOfDay(hour: parsed.hour, minute: parsed.minute).format(context);
-    } catch (_) {
-      final parts = trimmed.split(':');
-      if (parts.length < 2) return timeStr;
-
-      final hour = int.tryParse(parts[0]);
-      final minute = int.tryParse(parts[1]);
-      if (hour == null || minute == null) return timeStr;
-
-      return TimeOfDay(hour: hour, minute: minute).format(context);
+    // Try 12-hour format
+    if (trimmed.contains('AM') || trimmed.contains('PM')) {
+      final dt = DateFormat('hh:mm a').parseStrict(trimmed);
+      return DateFormat('hh:mm a').format(dt);
     }
+    // Try 24-hour format
+    final parts = trimmed.split(':');
+    if (parts.length >= 2) {
+      final h = int.parse(parts[0]);
+      final m = int.parse(parts[1]);
+      final dt = DateTime(2000, 1, 1, h, m);
+      return DateFormat('hh:mm a').format(dt);
+    }
+    return trimmed;
+  } catch (_) {
+    // Strip seconds if present (e.g. "08:00:00" → "08:00 AM")
+    final stripped = timeStr.replaceAll(RegExp(r':\d{2}$'), '').trim();
+    try {
+      final parts = stripped.split(':');
+      if (parts.length == 2) {
+        final dt = DateTime(2000, 1, 1, int.parse(parts[0]), int.parse(parts[1]));
+        return DateFormat('hh:mm a').format(dt);
+      }
+    } catch (_) {}
+    return timeStr; // Last resort
   }
+}
 
   Widget _buildMedicineCard(Medicine med) {
     final isExpanded = _expandedMedId == med.id;
@@ -1425,6 +1557,7 @@ class _MedsScreenState extends State<MedsScreen> {
                         child: Container(
                           width: 70, height: 70,
                           color: const Color(0xFF0EA5E9).withOpacity(0.1),
+                          // ignore: avoid_slow_async_io — inside build, sync required
                           child: med.imagePath != null && File(med.imagePath!).existsSync()
                               ? Image.file(File(med.imagePath!), fit: BoxFit.cover)
                               : const Icon(LucideIcons.pill, color: Color(0xFF0EA5E9), size: 30),
@@ -1725,12 +1858,16 @@ class _MedsScreenState extends State<MedsScreen> {
     if (timeStr == null) return null;
     try {
       final parts = timeStr.split(' ');
+      if (parts.length < 2) return null;
       final tParts = parts[0].split(':');
-      int hour = int.parse(tParts[0]);
-      final min = int.parse(tParts[1]);
-      if (parts[1] == 'PM' && hour < 12) hour += 12;
-      if (parts[1] == 'AM' && hour == 12) hour = 0;
-      return TimeOfDay(hour: hour, minute: min);
+      if (tParts.length < 2) return null;
+      final hour = int.tryParse(tParts[0]);
+      final min = int.tryParse(tParts[1]);
+      if (hour == null || min == null) return null;
+      int h = hour;
+      if (parts[1] == 'PM' && h < 12) h += 12;
+      if (parts[1] == 'AM' && h == 12) h = 0;
+      return TimeOfDay(hour: h, minute: min);
     } catch (_) { return null; }
   }
 

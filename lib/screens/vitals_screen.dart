@@ -44,10 +44,9 @@ class _VitalsScreenState extends State<VitalsScreen> {
       
       // Wait for both, and add a small minimum delay for the shimmer to be visible
       final results = await Future.wait([
-        latestFuture,
-        historyFuture,
-        if (isInitialLoad) Future.delayed(const Duration(seconds: 2)),
-      ]);
+  latestFuture,
+  historyFuture,
+]);
 
       if (mounted) {
         setState(() {

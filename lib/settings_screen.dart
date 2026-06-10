@@ -31,6 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _slotService = SlotPreferencesService();
   Map<String, dynamic> _slotPrefs = {};
   bool _slotPrefsLoaded = false;
+  int _retryInterval = 30;
 
   final List<String> _bloodGroups = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 
@@ -67,6 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _avatarImage = avatar;
           _alarmStyleFullscreen = fullscreen;
           _slotPrefs = slotPrefs;
+          _retryInterval = int.tryParse(slotPrefs['retry_interval']?.toString() ?? '30') ?? 30;
           _slotPrefsLoaded = true;
           _isLoading = false;
         });
@@ -157,8 +159,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   CircleAvatar(
                     radius: 60,
                     backgroundColor: Colors.grey[200],
-                    backgroundImage: _avatarImage != null && _avatarImage!.existsSync() ? FileImage(_avatarImage!) : null,
-                    child: _avatarImage == null || !_avatarImage!.existsSync()
+                    backgroundImage: _avatarImage != null
+                        ? FileImage(_avatarImage!)
+                        : null,
+                    child: _avatarImage == null
                         ? const Icon(LucideIcons.user, size: 50, color: Colors.grey)
                         : null,
                   ),
@@ -345,6 +349,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildSlotTile('afternoon', 'Afternoon', LucideIcons.sun, const Color(0xFFF97316)),
             _buildSlotTile('evening', 'Evening', LucideIcons.sunset, const Color(0xFF8B5CF6)),
             _buildSlotTile('night', 'Night', LucideIcons.moon, const Color(0xFF3B82F6)),
+            _buildRetryIntervalTile(),
           ] else
             const Padding(
               padding: EdgeInsets.all(16),
@@ -352,6 +357,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildRetryIntervalTile() {
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(LucideIcons.timer, color: Color(0xFF0EA5E9)),
+          title: const Text('Retry Interval', style: TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Text('Alarm repeats every $_retryInterval minutes if not taken'),
+          trailing: SizedBox(
+            width: 120,
+            child: Slider(
+              value: _retryInterval.toDouble(),
+              min: 10,
+              max: 60,
+              divisions: 10,
+              label: '$_retryInterval min',
+              onChanged: (val) {
+                setState(() {
+                  _retryInterval = val.round();
+                  _slotPrefs['retry_interval'] = _retryInterval;
+                });
+              },
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _calculateRetryInfo(),
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _saveSlotPrefs,
+              icon: const Icon(LucideIcons.save, size: 16),
+              label: const Text('Save Schedule Settings'),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -448,6 +502,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveSlotPrefs() async {
     try {
+      final validation = _validateSlotTimes();
+      if (validation != null) {
+        AppSnackBar.showError(context, validation);
+        return;
+      }
+      _slotPrefs['retry_interval'] = _retryInterval;
       await _slotService.savePreferences(_slotPrefs);
       if (mounted) AppSnackBar.showSuccess(context, 'Schedule times saved!');
     } catch (e) {
@@ -468,6 +528,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<int> _parseTime(String time24) {
     final parts = time24.split(':');
     return [int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0];
+  }
+
+  int _minutesOf(String time24) {
+    final parts = _parseTime(time24);
+    return parts[0] * 60 + parts[1];
+  }
+
+  String _calculateRetryInfo() {
+    final morningStart = _slotPrefs['morning_start']?.toString() ?? '08:00';
+    final morningEnd = _slotPrefs['morning_end']?.toString() ?? '09:30';
+    final rangeMins = _minutesOf(morningEnd) - _minutesOf(morningStart);
+    final retries = (rangeMins / _retryInterval).floor() - 1;
+    if (retries <= 0) {
+      return 'No retries possible - increase range or decrease interval';
+    }
+    return 'Morning: up to $retries retries possible';
+  }
+
+  String? _validateSlotTimes() {
+    final times = {
+      'morning': [
+        _slotPrefs['morning_start']?.toString() ?? '08:00',
+        _slotPrefs['morning_end']?.toString() ?? '09:30',
+      ],
+      'afternoon': [
+        _slotPrefs['afternoon_start']?.toString() ?? '12:00',
+        _slotPrefs['afternoon_end']?.toString() ?? '14:00',
+      ],
+      'evening': [
+        _slotPrefs['evening_start']?.toString() ?? '16:00',
+        _slotPrefs['evening_end']?.toString() ?? '18:00',
+      ],
+      'night': [
+        _slotPrefs['night_start']?.toString() ?? '21:00',
+        _slotPrefs['night_end']?.toString() ?? '22:30',
+      ],
+    };
+
+    var shortestRange = 24 * 60;
+    for (final entry in times.entries) {
+      final start = _minutesOf(entry.value[0]);
+      var end = _minutesOf(entry.value[1]);
+      if (entry.key == 'night' && end <= start) {
+        end += 24 * 60;
+      } else if (end <= start) {
+        return '${_capitalize(entry.key)} end must be after start time';
+      }
+      shortestRange = shortestRange < end - start ? shortestRange : end - start;
+    }
+
+    final slots = ['morning', 'afternoon', 'evening'];
+    for (int i = 0; i < slots.length - 1; i++) {
+      final currentEnd = _minutesOf(times[slots[i]]![1]);
+      final nextStart = _minutesOf(times[slots[i + 1]]![0]);
+      if (nextStart < currentEnd) {
+        return '${_capitalize(slots[i + 1])} start must be after ${slots[i]} end';
+      }
+    }
+
+    // Cross-midnight check: night end vs morning start
+    final nightStart = _minutesOf(times['night']![0]);
+    var nightEnd = _minutesOf(times['night']![1]);
+    if (nightEnd <= nightStart) nightEnd += 24 * 60; // crosses midnight
+    final morningStart = _minutesOf(times['morning']![0]);
+    if (nightEnd > 24 * 60 && (nightEnd - 24 * 60) > morningStart) {
+      return 'Night end overlaps with Morning start — adjust night end or morning start';
+    }
+
+    if (_retryInterval >= shortestRange) {
+      return 'Retry interval (${_retryInterval}min) must be less than shortest slot range (${shortestRange}min)';
+    }
+
+    return null;
+  }
+
+  String _capitalize(String value) {
+    if (value.isEmpty) return value;
+    return value[0].toUpperCase() + value.substring(1);
   }
 
   Widget _buildSettingsTile({

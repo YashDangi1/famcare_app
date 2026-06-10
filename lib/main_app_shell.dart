@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -13,7 +14,7 @@ import 'models/medicine_model.dart';
 import 'screens/alarm_setup_screen.dart';
 import 'family_hub_screen.dart';
 import 'screens/vitals_screen.dart';
-import 'main.dart' show medicineUpdatedNotifier;
+import 'main.dart' show activeAlarmIdNotifier, activeSlotAlarmNotifier, medicineUpdatedNotifier;
 import 'meds_screen.dart';
 import 'vault_screen.dart';
 import 'settings_screen.dart';
@@ -21,6 +22,7 @@ import 'screens/health_dashboard_screen.dart';
 import 'services/activity_service.dart';
 import 'services/notification_service.dart';
 import 'services/slot_preferences_service.dart';
+import 'screens/alarm_screen.dart';
 import 'screens/appointment_screen.dart';
 
 // ==========================================
@@ -189,6 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _fullName;
   bool _isLoading = true;
   bool _isRefreshingDashboard = false;
+  List<Medicine> _allMeds = [];
   List<Medicine> _todaysMeds = [];
   final Set<String> _existingImagePaths = {};
   Map<String, dynamic>? _latestVital;
@@ -219,31 +222,379 @@ class _HomeScreenState extends State<HomeScreen> {
   final Set<String> _takenSlotIdsToday = {};
   final Set<String> _skippedSlotIds = {}; // Format: "medId_slot"
   Map<String, dynamic> _slotPrefs = {}; // Slot time preferences (morning_start, etc.)
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _initDashboard();
+    _initDashboard().then((_) => _rescheduleAllTodayAlarms());
     _setupMedsSubscription();
     _minuteTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       if (mounted) {
+        final now = DateTime.now();
         _initDashboard();
         _checkSlotWhatsAppReminders();
+        _checkSlotEnds();
+        if (now.hour == 0 && now.minute == 0) {
+          _rescheduleAllTodayAlarms();
+        }
+        _cachedDueSoon = _getDueSoonMeds();
+        setState(() {});
       }
     });
     // Refresh Due Soon panel when medicine alarm time is edited
     medicineUpdatedNotifier.addListener(_onMedicineUpdated);
+    activeSlotAlarmNotifier.addListener(_onSlotAlarmReceived);
 
     // One-time slot setup prompt
     _checkSlotSetupPrompt();
+    _checkBootReschedule();
   }
 
   void _onMedicineUpdated() async {
     if (mounted) {
       await Future.delayed(const Duration(milliseconds: 500));
       _isRefreshingDashboard = false; // Reset guard so refresh isn't skipped
-      _initDashboard();
+      await _initDashboard();
+      await _rescheduleAllTodayAlarms();
     }
+  }
+
+  void _onSlotAlarmReceived() {
+    final slotKey = activeSlotAlarmNotifier.value;
+    if (slotKey == null || !mounted) return;
+
+    // ✅ Scroll to top so Due Soon panel is visible
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(0,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOut);
+    }
+
+    // ✅ Check alarm style preference
+    _openGroupAlarmUI(slotKey);
+    activeSlotAlarmNotifier.value = null;
+  }
+
+  Future<void> _openGroupAlarmUI(String slotKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    final fullscreen = prefs.getBool('alarm_style_fullscreen') ?? true;
+
+    if (!fullscreen || !mounted) {
+      // Notification-only mode — just refresh UI
+      setState(() {});
+      return;
+    }
+
+    // Get medicines for this slot from state
+    final medsForSlot = _todaysMeds.where((m) {
+      final slotId = '${m.id}_$slotKey';
+      return !_takenSlotIdsToday.contains(slotId) &&
+             !_skippedSlotIds.contains(slotId) &&
+             (m.slotTypes.contains(slotKey) || slotKey.startsWith('custom'));
+    }).toList();
+
+    if (medsForSlot.isEmpty || !mounted) return;
+
+    // Use first medicine for the alarm screen (most common case)
+    final med = medsForSlot.first;
+
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AlarmScreen(
+          alarmId: activeAlarmIdNotifier.value ?? 0,
+          isSnooze: false,
+          medicineName: medsForSlot.length == 1
+              ? med.name
+              : '${med.name} + ${medsForSlot.length - 1} more',
+          dosage: med.dosage,
+          qty: med.qty,
+          medicationId: med.id,
+          alarmSlot: 1,
+          scheduledTime: DateTime.now(),
+          imagePath: med.imagePath,
+        ),
+      ),
+    );
+
+    setState(() {});
+  }
+
+  Future<void> _checkBootReschedule() async {
+    final prefs = await SharedPreferences.getInstance();
+    final needsReschedule = prefs.getBool('needs_reschedule') ?? false;
+    if (!needsReschedule) return;
+
+    await _initDashboard();
+    await _rescheduleAllTodayAlarms();
+    await prefs.setBool('needs_reschedule', false);
+  }
+
+  Future<void> _rescheduleAllTodayAlarms() async {
+    final today = DateTime.now();
+    final prefs = await SharedPreferences.getInstance();
+    final slotPrefs = await SlotPreferencesService().getPreferences();
+    final slotGroups = <String, List<Medicine>>{};
+
+    for (final med in _allMeds) {
+      if (!med.isActive || med.isPaused || !med.isActiveOnDate(today)) continue;
+
+      for (final slot in med.slotTypes) {
+        if (slot == 'custom') {
+          for (int i = 0; i < med.customTimes.length; i++) {
+            final alarmTime = _parseMedicineTimeForDate(med.customTimes[i], today);
+            if (alarmTime == null || alarmTime.isBefore(today)) continue;
+            slotGroups.putIfAbsent('custom_${med.id}_$i', () => []).add(med);
+          }
+        } else {
+          final alarmTime = _getSlotAlarmTime(slot, med, today, slotPrefs);
+          if (alarmTime.isBefore(today)) continue;
+          slotGroups.putIfAbsent(slot, () => []).add(med);
+        }
+      }
+    }
+
+    for (final entry in slotGroups.entries) {
+      final slotKey = entry.key;
+      final meds = entry.value;
+      final slot = slotKey.startsWith('custom') ? 'custom' : slotKey;
+      final alarmTime = _getSlotAlarmTime(slotKey, meds.first, today, slotPrefs);
+
+      await _alarmService.cancelSlotAlarms(slotKey);
+      final alarmId = await _alarmService.scheduleGroupSlotAlarm(
+        slot: slot,
+        slotKey: slotKey,
+        alarmTime: alarmTime,
+        medicineNames: meds.map((m) => m.name).toList(),
+        medicationIdsJson: jsonEncode(meds.map((m) => m.id).whereType<String>().toList()),
+      );
+
+      if (alarmId != null) {
+        await prefs.setInt('active_group_alarm_$slotKey', alarmId);
+      }
+    }
+  }
+
+  DateTime _getSlotAlarmTime(
+    String slotKey,
+    Medicine med,
+    DateTime date,
+    Map<String, dynamic> slotPrefs,
+  ) {
+    if (slotKey.startsWith('custom')) {
+      final idx = int.tryParse(slotKey.split('_').last) ?? 0;
+      if (idx < med.customTimes.length) {
+        return _parseMedicineTimeForDate(med.customTimes[idx], date) ??
+            DateTime(date.year, date.month, date.day, 8);
+      }
+    }
+
+    final startStr = slotPrefs['${slotKey}_start'] ?? _defaultSlotStart(slotKey);
+    final parts = startStr.split(':');
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+      int.tryParse(parts[0]) ?? 8,
+      parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0,
+    );
+  }
+
+  DateTime? _parseMedicineTimeForDate(String timeStr, DateTime date) {
+    final trimmed = timeStr.trim();
+    try {
+      final parsed = DateFormat('hh:mm a').parseStrict(trimmed);
+      return DateTime(date.year, date.month, date.day, parsed.hour, parsed.minute);
+    } catch (_) {
+      final parts = trimmed.split(':');
+      if (parts.length < 2) return null;
+      final hour = int.tryParse(parts[0]);
+      final minute = int.tryParse(parts[1]);
+      if (hour == null || minute == null) return null;
+      return DateTime(date.year, date.month, date.day, hour, minute);
+    }
+  }
+
+  Future<void> _checkAndScheduleRetry(String slotKey) async {
+    final slot = slotKey.startsWith('custom') ? 'custom' : slotKey;
+    final slotPrefs = await SlotPreferencesService().getPreferences();
+    final retryInterval =
+        int.tryParse(slotPrefs['retry_interval']?.toString() ?? '30') ?? 30;
+
+    await _alarmService.cancelSlotAlarms(slotKey);
+
+    final remaining = _getDueSoonMeds()
+        .where((m) => (m['slotKey'] as String?) == slotKey)
+        .toList();
+    if (remaining.isEmpty) {
+      debugPrint('All $slotKey medicines taken - no retry');
+      return;
+    }
+
+    final retryTime = DateTime.now().add(Duration(minutes: retryInterval));
+    final slotEnd = _getSlotEndDateTime(slotKey, DateTime.now());
+    if (retryTime.isAfter(slotEnd)) {
+      await _markSlotRemainingAsMissed(slotKey);
+      return;
+    }
+
+    final retryId = await _alarmService.scheduleRetryAlarm(
+      slot: slot,
+      slotKey: slotKey,
+      retryTime: retryTime,
+      remainingMedicineNames:
+          remaining.map((m) => (m['medicine'] as Medicine).name).toList(),
+      remainingMedicationIdsJson: jsonEncode(
+        remaining.map((m) => (m['medicine'] as Medicine).id).whereType<String>().toList(),
+      ),
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    if (retryId != null) {
+      await prefs.setInt('active_retry_alarm_$slotKey', retryId);
+    }
+  }
+
+  void _checkSlotEnds() async {
+    final now = DateTime.now();
+    final allSlotKeys = <String>{};
+
+    for (final med in _allMeds) {
+      if (!med.isActive || med.isPaused || !med.isActiveOnDate(now)) continue;
+      for (final slot in med.slotTypes) {
+        if (slot == 'custom') {
+          for (int i = 0; i < med.customTimes.length; i++) {
+            allSlotKeys.add('custom_${med.id}_$i');
+          }
+        } else {
+          allSlotKeys.add(slot);
+        }
+      }
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final dayKey = DateFormat('yyyyMMdd').format(now);
+    for (final slotKey in allSlotKeys) {
+      final slotEnd = _getSlotEndDateTime(slotKey, now);
+      if (now.isAfter(slotEnd.add(const Duration(minutes: 2)))) {
+        final alreadyMarked = prefs.getBool('slot_missed_${slotKey}_$dayKey') ?? false;
+        if (!alreadyMarked) {
+          await _markSlotRemainingAsMissed(slotKey);
+          await prefs.setBool('slot_missed_${slotKey}_$dayKey', true);
+        }
+      }
+    }
+  }
+
+  DateTime _getSlotEndDateTime(String slotKey, DateTime date) {
+    if (slotKey.startsWith('custom')) {
+      final alarmTime = _getCustomSlotAlarmTime(slotKey, date);
+      return alarmTime.add(const Duration(hours: 1));
+    }
+
+    final endStr = _slotPrefs['${slotKey}_end'] ?? _defaultSlotEnd(slotKey);
+    final parts = endStr.split(':');
+    var end = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      int.tryParse(parts[0]) ?? 22,
+      parts.length > 1 ? int.tryParse(parts[1]) ?? 30 : 30,
+    );
+
+    if (slotKey == 'night') {
+      final startStr = _slotPrefs['night_start'] ?? '21:00';
+      final startParts = startStr.split(':');
+      final startHour = int.tryParse(startParts[0]) ?? 21;
+      if (end.hour < startHour) {
+        end = end.add(const Duration(days: 1));
+      }
+    }
+    return end;
+  }
+
+  DateTime _getCustomSlotAlarmTime(String slotKey, DateTime date) {
+    final parts = slotKey.split('_');
+    if (parts.length >= 3) {
+      final medId = parts.sublist(1, parts.length - 1).join('_');
+      final idx = int.tryParse(parts.last) ?? 0;
+      for (final med in _allMeds) {
+        if (med.id == medId && idx < med.customTimes.length) {
+          return _parseMedicineTimeForDate(med.customTimes[idx], date) ??
+              DateTime(date.year, date.month, date.day, 8);
+        }
+      }
+    }
+    return DateTime(date.year, date.month, date.day, 8);
+  }
+
+  Future<void> _markSlotRemainingAsMissed(String slotKey) async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    final remaining = _getRemainingSlotItems(slotKey, DateTime.now());
+    if (remaining.isEmpty) return;
+
+    for (final item in remaining) {
+      final med = item['medicine'] as Medicine;
+      final slot = item['slot'] as int;
+      final slotId = _slotKey(med.id ?? '', slot);
+      await _supabase.from('medicine_logs').insert({
+        'user_id': userId,
+        'medication_id': med.id,
+        'medicine_name': med.name,
+        'dosage': med.dosage,
+        'status': 'missed',
+        'alarm_slot': slot,
+        'scheduled_time': (item['dateTime'] as DateTime).toIso8601String(),
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      _skippedSlotIds.add(slotId);
+    }
+
+    final names = remaining.map((m) => (m['medicine'] as Medicine).name).toList();
+    await NotificationService().sendSlotMissedAlert(slotKey, names);
+    await _alarmService.cancelSlotAlarms(slotKey);
+  }
+
+  List<Map<String, dynamic>> _getRemainingSlotItems(String slotKey, DateTime date) {
+    final items = <Map<String, dynamic>>[];
+
+    for (final med in _todaysMeds) {
+      if (!med.isActive || med.isPaused || !med.isActiveOnDate(date)) continue;
+
+      if (slotKey.startsWith('custom')) {
+        final parts = slotKey.split('_');
+        if (parts.length < 3) continue;
+        final medId = parts.sublist(1, parts.length - 1).join('_');
+        final idx = int.tryParse(parts.last);
+        if (med.id != medId || idx == null || idx >= med.customTimes.length) continue;
+        final slot = 500 + idx;
+        final slotId = _slotKey(med.id ?? '', slot);
+        if (_takenSlotIdsToday.contains(slotId) || _skippedSlotIds.contains(slotId)) continue;
+        items.add({
+          'medicine': med,
+          'slot': slot,
+          'slotKey': slotKey,
+          'slotName': 'Custom',
+          'dateTime': _parseMedicineTimeForDate(med.customTimes[idx], date) ?? date,
+        });
+      } else if (med.slotTypes.contains(slotKey)) {
+        final slot = _slotIndex(slotKey);
+        final slotId = _slotKey(med.id ?? '', slot);
+        if (_takenSlotIdsToday.contains(slotId) || _skippedSlotIds.contains(slotId)) continue;
+        items.add({
+          'medicine': med,
+          'slot': slot,
+          'slotKey': slotKey,
+          'slotName': _slotNameLabel(slotKey),
+          'dateTime': _slotStartToday(slotKey),
+        });
+      }
+    }
+
+    return items;
   }
 
   Future<void> _checkSlotSetupPrompt() async {
@@ -362,7 +713,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (startStr == null) continue;
 
         final parts = startStr.split(':');
-        final slotStartMinutes = int.parse(parts[0]) * 60 + int.parse(parts[1]);
+        if (parts.length < 2) continue;
+        final slotStartMinutes = (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
 
         // Check if current time is within 2 minutes of slot start
         final diff = currentMinutes - slotStartMinutes;
@@ -401,7 +753,7 @@ class _HomeScreenState extends State<HomeScreen> {
         // Send WhatsApp for each medicine in this slot
         for (final med in medsInSlot) {
           final slotStart = DateTime(now.year, now.month, now.day,
-              int.parse(parts[0]), int.parse(parts[1]));
+              int.tryParse(parts[0]) ?? 0, int.tryParse(parts[1]) ?? 0);
           await NotificationService().sendSlotReminderAlert(
             patientName: patientName,
             medicineName: med['name'] ?? 'Medicine',
@@ -424,6 +776,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _minuteTimer?.cancel();
     _medsSubscription?.cancel();
     medicineUpdatedNotifier.removeListener(_onMedicineUpdated);
+    activeSlotAlarmNotifier.removeListener(_onSlotAlarmReceived);
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -493,14 +847,13 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime _slotStartToday(String slot) {
     final now = DateTime.now();
     if (slot == 'custom') {
-      // Custom slots use custom_start from prefs
       final startStr = _slotPrefs['custom_start'] ?? '08:00';
       final parts = startStr.split(':');
-      return DateTime(now.year, now.month, now.day, int.parse(parts[0]), int.parse(parts[1]));
+      return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 8, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
     }
     final startStr = _slotPrefs['${slot}_start'] ?? _defaultSlotStart(slot);
     final parts = startStr.split(':');
-    return DateTime(now.year, now.month, now.day, int.parse(parts[0]), int.parse(parts[1]));
+    return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 8, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
   }
 
   /// Returns the slot end DateTime for today
@@ -509,11 +862,11 @@ class _HomeScreenState extends State<HomeScreen> {
     if (slot == 'custom') {
       final endStr = _slotPrefs['custom_end'] ?? '09:00';
       final parts = endStr.split(':');
-      return DateTime(now.year, now.month, now.day, int.parse(parts[0]), int.parse(parts[1]));
+      return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 9, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
     }
     final endStr = _slotPrefs['${slot}_end'] ?? _defaultSlotEnd(slot);
     final parts = endStr.split(':');
-    return DateTime(now.year, now.month, now.day, int.parse(parts[0]), int.parse(parts[1]));
+    return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 9, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
   }
 
   static String _defaultSlotStart(String slot) {
@@ -563,7 +916,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final dueSoon = <Map<String, dynamic>>[];
 
     for (final med in _todaysMeds) {
-      if (med.isPaused) continue;
+      if (!med.isActive || med.isPaused) continue;
       if (!med.isActiveOnDate(now)) continue;
 
       for (final slot in med.slotTypes) {
@@ -573,7 +926,12 @@ class _HomeScreenState extends State<HomeScreen> {
             DateTime? customAlarmTime;
 
             try {
-              final parsed = DateFormat('hh:mm a').parseStrict(timeStr.trim());
+              DateTime parsed;
+              if (timeStr.contains('AM') || timeStr.contains('PM')) {
+                parsed = DateFormat('hh:mm a').parseStrict(timeStr.trim());
+              } else {
+                parsed = DateFormat('HH:mm').parseStrict(timeStr.trim());
+              }
               customAlarmTime = DateTime(
                 now.year,
                 now.month,
@@ -582,28 +940,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 parsed.minute,
               );
             } catch (_) {
-              final parts = timeStr.trim().split(':');
-              if (parts.length < 2) continue;
-              final hour = int.tryParse(parts[0]);
-              final minute = int.tryParse(parts[1]);
-              if (hour == null || minute == null) continue;
-              customAlarmTime = DateTime(
-                now.year,
-                now.month,
-                now.day,
-                hour,
-                minute,
-              );
+              continue;
             }
 
             final diff = customAlarmTime.difference(now).inMinutes;
             if (diff >= -30 && diff <= 15) {
-              final slotKey = _slotKey(med.id ?? '', 500 + i);
-              if (!_takenSlotIdsToday.contains(slotKey) &&
-                  !_skippedSlotIds.contains(slotKey)) {
+              final slotId = _slotKey(med.id ?? '', 500 + i);
+              final slotKey = 'custom_${med.id}_$i';
+              if (!_takenSlotIdsToday.contains(slotId) &&
+                  !_skippedSlotIds.contains(slotId)) {
                 dueSoon.add({
                   'medicine': med,
                   'slot': 500 + i,
+                  'slotKey': slotKey,
                   'customTimeStr': timeStr,
                   'slotName': 'Custom',
                   'dateTime': customAlarmTime,
@@ -618,12 +967,13 @@ class _HomeScreenState extends State<HomeScreen> {
           // Medicine is due if current time is within the slot range
           if (now.isAfter(slotStart) && now.isBefore(slotEnd)) {
             final slotIdx = _slotIndex(slot);
-            final slotKey = _slotKey(med.id ?? '', slotIdx);
-            if (!_takenSlotIdsToday.contains(slotKey) &&
-                !_skippedSlotIds.contains(slotKey)) {
+            final slotId = _slotKey(med.id ?? '', slotIdx);
+            if (!_takenSlotIdsToday.contains(slotId) &&
+                !_skippedSlotIds.contains(slotId)) {
               dueSoon.add({
                 'medicine': med,
                 'slot': slotIdx,
+                'slotKey': slot,
                 'slotName': _slotNameLabel(slot),
                 'dateTime': slotStart,
               });
@@ -662,6 +1012,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final medicine = med['medicine'] as Medicine;
       final medId = medicine.id;
       final int slot = med['slot'] as int;
+      final slotKey = med['slotKey'] as String?;
       final scheduledTime = med['dateTime'] as DateTime;
       if (medId == null) {
         throw Exception('Medicine ID is missing');
@@ -682,7 +1033,16 @@ class _HomeScreenState extends State<HomeScreen> {
           .from('medications')
           .select('qty')
           .eq('id', medId)
-          .single();
+          .maybeSingle();
+      if (latest == null) {
+        // Med was deleted concurrently — exit gracefully
+        if (mounted) {
+          _takenSlotIdsToday.add(_slotKey(medId, slot));
+          _skippedSlotIds.remove(_slotKey(medId, slot));
+          AppSnackBar.showSuccess(context, "Medicine marked as taken!");
+        }
+        return;
+      }
       final currentQty = int.tryParse(latest['qty'].toString()) ?? 0;
       final newQty = (currentQty - 1).clamp(0, 99999);
 
@@ -720,6 +1080,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _takenSlotIdsToday.add(_slotKey(medId, slot));
         _skippedSlotIds.remove(_slotKey(medId, slot));
         AppSnackBar.showSuccess(context, "Medicine marked as taken early!");
+        if (slotKey != null) {
+          await _checkAndScheduleRetry(slotKey);
+        }
         _initDashboard(); // Refresh all data
       }
     } catch (e) {
@@ -734,6 +1097,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final medicine = med['medicine'] as Medicine;
     final slot = med['slot'] as int;
+    final slotKey = med['slotKey'] as String?;
     final slotId = _slotKey(medicine.id ?? '', slot);
     final scheduledTime = med['dateTime'] as DateTime;
 
@@ -778,6 +1142,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) {
       AppSnackBar.showInfo(context, "Alarm cancelled for this dose");
     }
+    if (slotKey != null) {
+      await _checkAndScheduleRetry(slotKey);
+    }
   }
 
   Future<void> _initDashboard() async {
@@ -802,11 +1169,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final today = DateTime(now.year, now.month, now.day);
 
       int tempTotal = 0;
+      final allMeds = <Medicine>[];
       List<Medicine> todaysMeds = [];
 
       // 2. Filter locally with foolproof inclusive date check
       for (var item in response) {
         final med = Medicine.fromJson(item);
+        allMeds.add(med);
         final start = DateTime(med.startDate.year, med.startDate.month, med.startDate.day);
         DateTime end = DateTime(med.endDate.year, med.endDate.month, med.endDate.day);
         final parsedEndDate = DateTime.tryParse(item['end_date']?.toString() ?? '');
@@ -834,7 +1203,7 @@ class _HomeScreenState extends State<HomeScreen> {
           .from('medicine_logs')
           .select()
           .eq('user_id', userId)
-          .inFilter('status', ['taken', 'skipped'])
+          .inFilter('status', ['taken', 'skipped', 'missed'])
           .gte('created_at', startOfDay)
           .lte('created_at', endOfDay);
 
@@ -945,16 +1314,18 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() {
           _todaysMeds = todaysMeds;
+          _allMeds = allMeds;
           _slotPrefs = slotPrefs;
-          // Cache image existence to avoid sync I/O in build()
           _existingImagePaths.clear();
+          final List<Future<void>> imageChecks = [];
           for (final m in todaysMeds) {
             if (m.imagePath != null && m.imagePath!.isNotEmpty) {
-              if (File(m.imagePath!).existsSync()) {
-                _existingImagePaths.add(m.imagePath!);
-              }
+              imageChecks.add(File(m.imagePath!).exists().then((exists) {
+                if (exists) _existingImagePaths.add(m.imagePath!);
+              }));
             }
           }
+          await Future.wait(imageChecks);
           _takenSlotIdsToday
             ..clear()
             ..addAll(hiddenSlotIds);
@@ -983,6 +1354,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _nextMedTimeLabel = nextSlotLabel;
           _missedLogs = missedLogs;
           _nextAppointment = nextAppointment;
+          _cachedDueSoon = _getDueSoonMeds();
         });
       }
     } catch (e) {
@@ -1165,6 +1537,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : RefreshIndicator(
               onRefresh: _initDashboard,
               child: SingleChildScrollView(
+                controller: _scrollController,
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(20),
                 child: Column(
@@ -1172,7 +1545,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Builder(
                       builder: (context) {
-                        final dueSoonKeys = _getDueSoonMeds()
+                        final dueSoonKeys = _cachedDueSoon
                             .map((m) => _slotKey((m['medicine'] as Medicine).id ?? '', m['slot'] as int))
                             .toSet();
                         final upcoming = _getUpcomingMedsInWindow()

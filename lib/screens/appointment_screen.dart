@@ -244,7 +244,10 @@ class _AddAppointmentSheetState extends State<_AddAppointmentSheet> {
         'appointment_time': _selectedDateTime!.toUtc().toIso8601String(),
         'notes': _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         'reminder_enabled': _reminderEnabled,
-      }).select().single();
+      }).select().maybeSingle();
+      if (response == null) {
+        throw Exception('Failed to save appointment');
+      }
 
       // Schedule reminder notification 60 min before
       if (_reminderEnabled) {

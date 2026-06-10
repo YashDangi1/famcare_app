@@ -166,7 +166,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
               keyboardType: TextInputType.phone,
               decoration: InputDecoration(
                 labelText: 'Phone Number',
-                hintText: '+91 9876543210',
+                hintText: 'Enter with country code (e.g. +91 98765 43210)',
                 prefixIcon: const Icon(LucideIcons.phone, size: 20),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
               ),
