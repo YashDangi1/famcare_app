@@ -279,14 +279,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openGroupAlarmUI(String slotKey) async {
-    final prefs = await SharedPreferences.getInstance();
-    final fullscreen = prefs.getBool('alarm_style_fullscreen') ?? true;
-
-    if (!fullscreen || !mounted) {
-      // Notification-only mode — just refresh UI
-      setState(() {});
-      return;
-    }
+    if (!mounted) return;
 
     // Wait for dashboard data to load (up to 6 seconds)
     int attempts = 0;
@@ -637,7 +630,7 @@ class _HomeScreenState extends State<HomeScreen> {
           'slot': slot,
           'slotKey': slotKey,
           'slotName': _slotNameLabel(slotKey),
-          'dateTime': _slotStartToday(slotKey),
+          'dateTime': _getActiveSlotStart(slotKey, date),
         });
       }
     }
@@ -847,30 +840,62 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
 
-  /// Returns the slot start DateTime for today
-  DateTime _slotStartToday(String slot) {
-    final now = DateTime.now();
+  /// Returns whether [now] is currently within the given [slot] range
+  bool _isTimeInSlot(String slot, DateTime now) {
+    if (slot == 'custom') return false; // Handled separately
+    final startStr = _slotPrefs['${slot}_start'] ?? _defaultSlotStart(slot);
+    final endStr = _slotPrefs['${slot}_end'] ?? _defaultSlotEnd(slot);
+
+    final startParts = startStr.split(':');
+    final endParts = endStr.split(':');
+
+    final startH = int.tryParse(startParts[0]) ?? 8;
+    final startM = int.tryParse(startParts.length > 1 ? startParts[1] : '0') ?? 0;
+    final endH = int.tryParse(endParts[0]) ?? 9;
+    final endM = int.tryParse(endParts.length > 1 ? endParts[1] : '0') ?? 0;
+
+    final startMins = startH * 60 + startM;
+    final endMins = endH * 60 + endM;
+    final nowMins = now.hour * 60 + now.minute;
+
+    if (endMins < startMins) {
+      // Crosses midnight
+      return nowMins >= startMins || nowMins < endMins;
+    } else {
+      return nowMins >= startMins && nowMins < endMins;
+    }
+  }
+
+  /// Returns the active slot start DateTime based on [now]
+  DateTime _getActiveSlotStart(String slot, DateTime now) {
     if (slot == 'custom') {
       final startStr = _slotPrefs['custom_start'] ?? '08:00';
       final parts = startStr.split(':');
       return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 8, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
     }
+    
     final startStr = _slotPrefs['${slot}_start'] ?? _defaultSlotStart(slot);
-    final parts = startStr.split(':');
-    return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 8, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
-  }
-
-  /// Returns the slot end DateTime for today
-  DateTime _slotEndToday(String slot) {
-    final now = DateTime.now();
-    if (slot == 'custom') {
-      final endStr = _slotPrefs['custom_end'] ?? '09:00';
-      final parts = endStr.split(':');
-      return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 9, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
-    }
     final endStr = _slotPrefs['${slot}_end'] ?? _defaultSlotEnd(slot);
-    final parts = endStr.split(':');
-    return DateTime(now.year, now.month, now.day, int.tryParse(parts[0]) ?? 9, int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
+    
+    final startParts = startStr.split(':');
+    final endParts = endStr.split(':');
+    
+    final startH = int.tryParse(startParts[0]) ?? 8;
+    final startM = int.tryParse(startParts.length > 1 ? startParts[1] : '0') ?? 0;
+    final endH = int.tryParse(endParts[0]) ?? 9;
+    final endM = int.tryParse(endParts.length > 1 ? endParts[1] : '0') ?? 0;
+
+    final startMins = startH * 60 + startM;
+    final endMins = endH * 60 + endM;
+    final nowMins = now.hour * 60 + now.minute;
+
+    if (endMins < startMins && nowMins < endMins) {
+      // It's past midnight but before the end of the slot.
+      // The start time was yesterday.
+      final yesterday = now.subtract(const Duration(days: 1));
+      return DateTime(yesterday.year, yesterday.month, yesterday.day, startH, startM);
+    }
+    return DateTime(now.year, now.month, now.day, startH, startM);
   }
 
   static String _defaultSlotStart(String slot) {
@@ -948,11 +973,8 @@ class _HomeScreenState extends State<HomeScreen> {
             }
           }
         } else {
-          final slotStart = _slotStartToday(slot);
-          final slotEnd = _slotEndToday(slot);
-
           // Medicine is due if current time is within the slot range
-          if (now.isAfter(slotStart) && now.isBefore(slotEnd)) {
+          if (_isTimeInSlot(slot, now)) {
             final slotIdx = _slotIndex(slot);
             final slotId = _slotKey(med.id ?? '', slotIdx);
             if (!_takenSlotIdsToday.contains(slotId) &&
@@ -962,7 +984,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 'slot': slotIdx,
                 'slotKey': slot,
                 'slotName': _slotNameLabel(slot),
-                'dateTime': slotStart,
+                'dateTime': _getActiveSlotStart(slot, now),
               });
             }
           }

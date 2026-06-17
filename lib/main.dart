@@ -259,6 +259,30 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
 
   final decoded = jsonDecode(groupData) as Map<String, dynamic>;
   final slotKey = decoded['slot_key'] as String?;
+  final medicineNames = decoded['medicine_names'] as List<dynamic>?;
+
+  final isFullScreen = prefs.getBool('alarm_style_fullscreen') ?? true;
+  
+  if (!isFullScreen) {
+    debugPrint("Alarm style: Notification only — replacing group alarm with action notification");
+    
+    // Trigger notification
+    final medListString = medicineNames?.join(', ') ?? 'Medicines';
+    await AlarmService().showActionNotification(
+      alarmId: alarmId,
+      medicineName: 'Slot: ${slotKey ?? "Unknown"}',
+      dosage: medListString,
+      scheduledTime: DateTime.now(), // Approximate
+    );
+  }
+
+  if (!isFullScreen) {
+    // If we're not in full screen mode, we just return true.
+    // We DON'T set the notifier here to avoid interrupting the user if the app is foreground.
+    // The notifier will be set when the user taps the notification.
+    return true;
+  }
+
   activeSlotAlarmNotifier.value = slotKey;
 
   // Persist so startup can catch it if navigator isn't ready (killed state)
@@ -294,7 +318,25 @@ void _onNotificationResponse(NotificationResponse response) async {
   final payload = response.payload ?? '';
   debugPrint("=== NOTIFICATION RESPONSE === actionId: $actionId, payload: $payload");
 
-  if (actionId.startsWith('took_it_')) {
+  if (actionId.isEmpty && payload.startsWith('alarm_action_')) {
+    // User tapped the notification body
+    final alarmId = int.tryParse(payload.replaceFirst('alarm_action_', ''));
+    if (alarmId != null) {
+      // Check if it's a group alarm
+      final prefs = await SharedPreferences.getInstance();
+      final groupData = prefs.getString('group_alarm_$alarmId');
+      if (groupData != null) {
+        final decoded = jsonDecode(groupData) as Map<String, dynamic>;
+        final slotKey = decoded['slot_key'] as String?;
+        if (slotKey != null) {
+          activeSlotAlarmNotifier.value = slotKey;
+        }
+      } else {
+        // Normal alarm fallback
+        activeAlarmIdNotifier.value = alarmId;
+      }
+    }
+  } else if (actionId.startsWith('took_it_')) {
     final alarmId = int.tryParse(actionId.replaceFirst('took_it_', ''));
     if (alarmId != null) await _handleNotificationTookIt(alarmId);
   } else if (actionId.startsWith('take_later_')) {

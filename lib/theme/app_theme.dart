@@ -14,6 +14,7 @@ class AppTheme {
   static const Color emeraldAccent = Color(0xFF00FF87);
   static const Color orangeAccent = Color(0xFFFF5E00);
   static const Color purpleAccent = Color(0xFF9D00FF);
+  static const Color primaryBlue = Color(0xFF0EA5E9);
 
   // Text Colors
   static const Color textPrimary = Color(0xFFFFFFFF);

@@ -33,6 +33,17 @@ class Medicine {
   final bool isPaused;
   final bool lowStockAlerted;              // Pause feature
 
+  // New fields for senior-friendly UI
+  final String? form;
+  final String? color;
+  final double? strength;
+  final String? strengthUnit;
+  final String? takeAmount;
+  final String? foodInstruction;
+  final bool isAsNeeded;
+  final int? refillReminderThreshold;
+  final String? condition;
+
   Medicine({
     this.id,
     this.userId,
@@ -61,6 +72,15 @@ class Medicine {
     this.notes = '',
     this.isPaused = false,
     this.lowStockAlerted = false,
+    this.form,
+    this.color,
+    this.strength,
+    this.strengthUnit,
+    this.takeAmount,
+    this.foodInstruction,
+    this.isAsNeeded = false,
+    this.refillReminderThreshold,
+    this.condition,
   });
 
   Medicine copyWith({
@@ -91,6 +111,15 @@ class Medicine {
     String? notes,
     bool? isPaused,
     bool? lowStockAlerted,
+    String? form,
+    String? color,
+    double? strength,
+    String? strengthUnit,
+    String? takeAmount,
+    String? foodInstruction,
+    bool? isAsNeeded,
+    int? refillReminderThreshold,
+    String? condition,
   }) {
     return Medicine(
       id: id ?? this.id,
@@ -120,6 +149,15 @@ class Medicine {
       notes: notes ?? this.notes,
       isPaused: isPaused ?? this.isPaused,
       lowStockAlerted: lowStockAlerted ?? this.lowStockAlerted,
+      form: form ?? this.form,
+      color: color ?? this.color,
+      strength: strength ?? this.strength,
+      strengthUnit: strengthUnit ?? this.strengthUnit,
+      takeAmount: takeAmount ?? this.takeAmount,
+      foodInstruction: foodInstruction ?? this.foodInstruction,
+      isAsNeeded: isAsNeeded ?? this.isAsNeeded,
+      refillReminderThreshold: refillReminderThreshold ?? this.refillReminderThreshold,
+      condition: condition ?? this.condition,
     );
   }
 
@@ -170,7 +208,16 @@ class Medicine {
       ..specificDates = specificDates
       ..notes = notes
       ..isPaused = isPaused
-      ..lowStockAlerted = lowStockAlerted;
+      ..lowStockAlerted = lowStockAlerted
+      ..form = form
+      ..color = color
+      ..strength = strength
+      ..strengthUnit = strengthUnit
+      ..takeAmount = takeAmount
+      ..foodInstruction = foodInstruction
+      ..isAsNeeded = isAsNeeded
+      ..refillReminderThreshold = refillReminderThreshold
+      ..condition = condition;
   }
 
   factory Medicine.fromEntity(MedicineEntity entity) {
@@ -202,6 +249,15 @@ class Medicine {
       notes: entity.notes,
       isPaused: entity.isPaused,
       lowStockAlerted: entity.lowStockAlerted,
+      form: entity.form,
+      color: entity.color,
+      strength: entity.strength,
+      strengthUnit: entity.strengthUnit,
+      takeAmount: entity.takeAmount,
+      foodInstruction: entity.foodInstruction,
+      isAsNeeded: entity.isAsNeeded,
+      refillReminderThreshold: entity.refillReminderThreshold,
+      condition: entity.condition,
     );
   }
 
@@ -242,6 +298,15 @@ class Medicine {
         notes: json['notes']?.toString() ?? '',
         isPaused: json['is_paused'] == true || json['is_paused'] == 1,
         lowStockAlerted: json['low_stock_alerted'] == true || json['low_stock_alerted'] == 1,
+        form: json['form']?.toString(),
+        color: json['color']?.toString(),
+        strength: double.tryParse(json['strength']?.toString() ?? ''),
+        strengthUnit: json['strength_unit']?.toString(),
+        takeAmount: json['take_amount']?.toString(),
+        foodInstruction: json['food_instruction']?.toString(),
+        isAsNeeded: json['is_as_needed'] == true || json['is_as_needed'] == 1,
+        refillReminderThreshold: int.tryParse(json['refill_reminder_threshold']?.toString() ?? ''),
+        condition: json['condition']?.toString(),
       );
     } catch (e) {
       print("Medicine parsing error: $e");
@@ -289,6 +354,15 @@ class Medicine {
       'notes': notes,
       'is_paused': isPaused,
       'low_stock_alerted': lowStockAlerted,
+      'form': form,
+      'color': color,
+      'strength': strength,
+      'strength_unit': strengthUnit,
+      'take_amount': takeAmount,
+      'food_instruction': foodInstruction,
+      'is_as_needed': isAsNeeded,
+      'refill_reminder_threshold': refillReminderThreshold,
+      'condition': condition,
     };
   }
 

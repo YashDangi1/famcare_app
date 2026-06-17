@@ -15,7 +15,7 @@ import 'screens/medicine_log_screen.dart';
 import 'utils/snackbar_utils.dart';
 import 'main.dart' show medicineUpdatedNotifier;
 import 'services/activity_service.dart';
-import 'screens/meds/add_medicine_bottom_sheet.dart';
+import 'screens/meds/add_medicine_wizard.dart';
 import 'screens/meds/widgets/medicine_card.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -84,11 +84,13 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   // ➕ ADD/EDIT MEDICINE DIALOG (Redesigned)
   // ==========================================
   Future<void> _showAddEditDialog({Medicine? existingMed}) async {
-    await showDialog(
-      context: context,
-      builder: (context) => AddMedicineBottomSheet(
-        existingMed: existingMed,
-        onSave: _handleSave,
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddMedicineWizard(
+          existingMed: existingMed,
+          onSave: _handleSave,
+        ),
       ),
     );
   }
@@ -375,10 +377,18 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   }
 
   Future<void> _handleSave({
-    BuildContext? dialogContext,
+    required BuildContext dialogContext,
     Medicine? existingMed,
     required String name,
-    required String dosage,
+    required String condition,
+    required String? form,
+    required String? color,
+    File? image,
+    required double? strength,
+    required String? strengthUnit,
+    required String? takeAmount,
+    required String? foodInstruction,
+    required bool isAsNeeded,
     required List<String> selectedSlots,
     required List<TimeOfDay> customAlarmTimes,
     required String scheduleType,
@@ -388,7 +398,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     required int dur,
     required DateTime start,
     required int qty,
-    File? image,
+    required int? refillReminderThreshold,
   }) async {
     if (_isSaving) return;
     _isSaving = true;
@@ -456,7 +466,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
         id: existingMed?.id,
         userId: userId,
         name: name,
-        dosage: dosage,
+        dosage: takeAmount ?? "1 tablet", // Fallback for legacy
         frequency: frequency,
         time1: time1,
         time2: time2,
@@ -480,6 +490,15 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
         notes: notes,
         isPaused: existingMed?.isPaused ?? false,
         lowStockAlerted: existingMed?.lowStockAlerted ?? false,
+        form: form,
+        color: color,
+        strength: strength,
+        strengthUnit: strengthUnit,
+        takeAmount: takeAmount,
+        foodInstruction: foodInstruction,
+        isAsNeeded: isAsNeeded,
+        refillReminderThreshold: refillReminderThreshold,
+        condition: condition,
       );
 
       if (existingMed?.id != null) {
@@ -1151,6 +1170,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
       onShowOptions: () => _showMedicineOptions(med),
       onRefill: () => _showRefillDialog(med),
       onUpdateQty: (delta) => _updateQty(med, delta),
+      slotPrefs: _slotPrefs,
     );
   }
 

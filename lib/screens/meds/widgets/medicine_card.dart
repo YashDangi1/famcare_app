@@ -15,6 +15,7 @@ class MedicineCard extends StatelessWidget {
   final VoidCallback onShowOptions;
   final VoidCallback onRefill;
   final Function(int delta) onUpdateQty;
+  final Map<String, dynamic> slotPrefs;
 
   const MedicineCard({
     super.key,
@@ -25,6 +26,7 @@ class MedicineCard extends StatelessWidget {
     required this.onShowOptions,
     required this.onRefill,
     required this.onUpdateQty,
+    required this.slotPrefs,
   });
 
   String _formatMedicineChipTime(String timeStr, BuildContext context) {
@@ -56,6 +58,31 @@ class MedicineCard extends StatelessWidget {
       } catch (_) {}
       return timeStr;
     }
+  }
+
+  List<String> _getDynamicActiveTimes() {
+    final times = <String>[];
+    for (final slot in med.slotTypes) {
+      if (slot == 'custom') {
+        times.addAll(med.customTimes);
+      } else {
+        final startStr = slotPrefs['${slot}_start'];
+        if (startStr != null) {
+          times.add(startStr);
+        } else {
+          // Default fallbacks
+          if (slot == 'morning') times.add('08:00');
+          else if (slot == 'afternoon') times.add('12:00');
+          else if (slot == 'evening') times.add('16:00');
+          else if (slot == 'night') times.add('21:00');
+        }
+      }
+    }
+    // Fallback to activeTimes if no slots defined (for backward compatibility)
+    if (times.isEmpty) {
+      return med.activeTimes;
+    }
+    return times;
   }
 
   @override
@@ -175,7 +202,7 @@ class MedicineCard extends StatelessWidget {
                             Wrap(
                               spacing: 8,
                               runSpacing: 8,
-                              children: med.activeTimes.map((t) => Container(
+                              children: _getDynamicActiveTimes().map((t) => Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                 decoration: BoxDecoration(
                                   color: primaryColor.withValues(alpha: 0.1),

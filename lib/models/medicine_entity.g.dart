@@ -32,123 +32,168 @@ const MedicineEntitySchema = CollectionSchema(
       name: r'alarmId3',
       type: IsarType.long,
     ),
-    r'counter': PropertySchema(
+    r'color': PropertySchema(
       id: 3,
+      name: r'color',
+      type: IsarType.string,
+    ),
+    r'condition': PropertySchema(
+      id: 4,
+      name: r'condition',
+      type: IsarType.string,
+    ),
+    r'counter': PropertySchema(
+      id: 5,
       name: r'counter',
       type: IsarType.long,
     ),
     r'createdAt': PropertySchema(
-      id: 4,
+      id: 6,
       name: r'createdAt',
       type: IsarType.dateTime,
     ),
     r'customTimes': PropertySchema(
-      id: 5,
+      id: 7,
       name: r'customTimes',
       type: IsarType.stringList,
     ),
     r'dosage': PropertySchema(
-      id: 6,
+      id: 8,
       name: r'dosage',
       type: IsarType.string,
     ),
     r'durationDays': PropertySchema(
-      id: 7,
+      id: 9,
       name: r'durationDays',
       type: IsarType.long,
     ),
     r'everyXDays': PropertySchema(
-      id: 8,
+      id: 10,
       name: r'everyXDays',
       type: IsarType.long,
     ),
+    r'foodInstruction': PropertySchema(
+      id: 11,
+      name: r'foodInstruction',
+      type: IsarType.string,
+    ),
+    r'form': PropertySchema(
+      id: 12,
+      name: r'form',
+      type: IsarType.string,
+    ),
     r'frequency': PropertySchema(
-      id: 9,
+      id: 13,
       name: r'frequency',
       type: IsarType.long,
     ),
     r'imagePath': PropertySchema(
-      id: 10,
+      id: 14,
       name: r'imagePath',
       type: IsarType.string,
     ),
     r'isActive': PropertySchema(
-      id: 11,
+      id: 15,
       name: r'isActive',
       type: IsarType.bool,
     ),
+    r'isAsNeeded': PropertySchema(
+      id: 16,
+      name: r'isAsNeeded',
+      type: IsarType.bool,
+    ),
     r'isPaused': PropertySchema(
-      id: 12,
+      id: 17,
       name: r'isPaused',
       type: IsarType.bool,
     ),
     r'isTaken': PropertySchema(
-      id: 13,
+      id: 18,
       name: r'isTaken',
       type: IsarType.bool,
     ),
     r'lowStockAlerted': PropertySchema(
-      id: 14,
+      id: 19,
       name: r'lowStockAlerted',
       type: IsarType.bool,
     ),
     r'name': PropertySchema(
-      id: 15,
+      id: 20,
       name: r'name',
       type: IsarType.string,
     ),
     r'notes': PropertySchema(
-      id: 16,
+      id: 21,
       name: r'notes',
       type: IsarType.string,
     ),
     r'qty': PropertySchema(
-      id: 17,
+      id: 22,
       name: r'qty',
       type: IsarType.long,
     ),
+    r'refillReminderThreshold': PropertySchema(
+      id: 23,
+      name: r'refillReminderThreshold',
+      type: IsarType.long,
+    ),
     r'scheduleType': PropertySchema(
-      id: 18,
+      id: 24,
       name: r'scheduleType',
       type: IsarType.string,
     ),
     r'slotTypes': PropertySchema(
-      id: 19,
+      id: 25,
       name: r'slotTypes',
       type: IsarType.stringList,
     ),
     r'specificDates': PropertySchema(
-      id: 20,
+      id: 26,
       name: r'specificDates',
       type: IsarType.stringList,
     ),
     r'startDate': PropertySchema(
-      id: 21,
+      id: 27,
       name: r'startDate',
       type: IsarType.dateTime,
     ),
+    r'strength': PropertySchema(
+      id: 28,
+      name: r'strength',
+      type: IsarType.double,
+    ),
+    r'strengthUnit': PropertySchema(
+      id: 29,
+      name: r'strengthUnit',
+      type: IsarType.string,
+    ),
     r'supabaseId': PropertySchema(
-      id: 22,
+      id: 30,
       name: r'supabaseId',
       type: IsarType.string,
     ),
+    r'takeAmount': PropertySchema(
+      id: 31,
+      name: r'takeAmount',
+      type: IsarType.string,
+    ),
     r'time1': PropertySchema(
-      id: 23,
+      id: 32,
       name: r'time1',
       type: IsarType.string,
     ),
     r'time2': PropertySchema(
-      id: 24,
+      id: 33,
       name: r'time2',
       type: IsarType.string,
     ),
     r'time3': PropertySchema(
-      id: 25,
+      id: 34,
       name: r'time3',
       type: IsarType.string,
     ),
     r'userId': PropertySchema(
-      id: 26,
+      id: 35,
       name: r'userId',
       type: IsarType.string,
     )
@@ -187,6 +232,18 @@ int _medicineEntityEstimateSize(
   Map<Type, List<int>> allOffsets,
 ) {
   var bytesCount = offsets.last;
+  {
+    final value = object.color;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  {
+    final value = object.condition;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   bytesCount += 3 + object.customTimes.length * 3;
   {
     for (var i = 0; i < object.customTimes.length; i++) {
@@ -195,6 +252,18 @@ int _medicineEntityEstimateSize(
     }
   }
   bytesCount += 3 + object.dosage.length * 3;
+  {
+    final value = object.foodInstruction;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  {
+    final value = object.form;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   {
     final value = object.imagePath;
     if (value != null) {
@@ -219,7 +288,19 @@ int _medicineEntityEstimateSize(
     }
   }
   {
+    final value = object.strengthUnit;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  {
     final value = object.supabaseId;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
+  {
+    final value = object.takeAmount;
     if (value != null) {
       bytesCount += 3 + value.length * 3;
     }
@@ -260,30 +341,39 @@ void _medicineEntitySerialize(
   writer.writeLong(offsets[0], object.alarmId1);
   writer.writeLong(offsets[1], object.alarmId2);
   writer.writeLong(offsets[2], object.alarmId3);
-  writer.writeLong(offsets[3], object.counter);
-  writer.writeDateTime(offsets[4], object.createdAt);
-  writer.writeStringList(offsets[5], object.customTimes);
-  writer.writeString(offsets[6], object.dosage);
-  writer.writeLong(offsets[7], object.durationDays);
-  writer.writeLong(offsets[8], object.everyXDays);
-  writer.writeLong(offsets[9], object.frequency);
-  writer.writeString(offsets[10], object.imagePath);
-  writer.writeBool(offsets[11], object.isActive);
-  writer.writeBool(offsets[12], object.isPaused);
-  writer.writeBool(offsets[13], object.isTaken);
-  writer.writeBool(offsets[14], object.lowStockAlerted);
-  writer.writeString(offsets[15], object.name);
-  writer.writeString(offsets[16], object.notes);
-  writer.writeLong(offsets[17], object.qty);
-  writer.writeString(offsets[18], object.scheduleType);
-  writer.writeStringList(offsets[19], object.slotTypes);
-  writer.writeStringList(offsets[20], object.specificDates);
-  writer.writeDateTime(offsets[21], object.startDate);
-  writer.writeString(offsets[22], object.supabaseId);
-  writer.writeString(offsets[23], object.time1);
-  writer.writeString(offsets[24], object.time2);
-  writer.writeString(offsets[25], object.time3);
-  writer.writeString(offsets[26], object.userId);
+  writer.writeString(offsets[3], object.color);
+  writer.writeString(offsets[4], object.condition);
+  writer.writeLong(offsets[5], object.counter);
+  writer.writeDateTime(offsets[6], object.createdAt);
+  writer.writeStringList(offsets[7], object.customTimes);
+  writer.writeString(offsets[8], object.dosage);
+  writer.writeLong(offsets[9], object.durationDays);
+  writer.writeLong(offsets[10], object.everyXDays);
+  writer.writeString(offsets[11], object.foodInstruction);
+  writer.writeString(offsets[12], object.form);
+  writer.writeLong(offsets[13], object.frequency);
+  writer.writeString(offsets[14], object.imagePath);
+  writer.writeBool(offsets[15], object.isActive);
+  writer.writeBool(offsets[16], object.isAsNeeded);
+  writer.writeBool(offsets[17], object.isPaused);
+  writer.writeBool(offsets[18], object.isTaken);
+  writer.writeBool(offsets[19], object.lowStockAlerted);
+  writer.writeString(offsets[20], object.name);
+  writer.writeString(offsets[21], object.notes);
+  writer.writeLong(offsets[22], object.qty);
+  writer.writeLong(offsets[23], object.refillReminderThreshold);
+  writer.writeString(offsets[24], object.scheduleType);
+  writer.writeStringList(offsets[25], object.slotTypes);
+  writer.writeStringList(offsets[26], object.specificDates);
+  writer.writeDateTime(offsets[27], object.startDate);
+  writer.writeDouble(offsets[28], object.strength);
+  writer.writeString(offsets[29], object.strengthUnit);
+  writer.writeString(offsets[30], object.supabaseId);
+  writer.writeString(offsets[31], object.takeAmount);
+  writer.writeString(offsets[32], object.time1);
+  writer.writeString(offsets[33], object.time2);
+  writer.writeString(offsets[34], object.time3);
+  writer.writeString(offsets[35], object.userId);
 }
 
 MedicineEntity _medicineEntityDeserialize(
@@ -296,31 +386,40 @@ MedicineEntity _medicineEntityDeserialize(
   object.alarmId1 = reader.readLongOrNull(offsets[0]);
   object.alarmId2 = reader.readLongOrNull(offsets[1]);
   object.alarmId3 = reader.readLongOrNull(offsets[2]);
-  object.counter = reader.readLong(offsets[3]);
-  object.createdAt = reader.readDateTimeOrNull(offsets[4]);
-  object.customTimes = reader.readStringList(offsets[5]) ?? [];
-  object.dosage = reader.readString(offsets[6]);
-  object.durationDays = reader.readLong(offsets[7]);
-  object.everyXDays = reader.readLong(offsets[8]);
-  object.frequency = reader.readLong(offsets[9]);
+  object.color = reader.readStringOrNull(offsets[3]);
+  object.condition = reader.readStringOrNull(offsets[4]);
+  object.counter = reader.readLong(offsets[5]);
+  object.createdAt = reader.readDateTimeOrNull(offsets[6]);
+  object.customTimes = reader.readStringList(offsets[7]) ?? [];
+  object.dosage = reader.readString(offsets[8]);
+  object.durationDays = reader.readLong(offsets[9]);
+  object.everyXDays = reader.readLong(offsets[10]);
+  object.foodInstruction = reader.readStringOrNull(offsets[11]);
+  object.form = reader.readStringOrNull(offsets[12]);
+  object.frequency = reader.readLong(offsets[13]);
   object.id = id;
-  object.imagePath = reader.readStringOrNull(offsets[10]);
-  object.isActive = reader.readBool(offsets[11]);
-  object.isPaused = reader.readBool(offsets[12]);
-  object.isTaken = reader.readBool(offsets[13]);
-  object.lowStockAlerted = reader.readBool(offsets[14]);
-  object.name = reader.readString(offsets[15]);
-  object.notes = reader.readString(offsets[16]);
-  object.qty = reader.readLong(offsets[17]);
-  object.scheduleType = reader.readString(offsets[18]);
-  object.slotTypes = reader.readStringList(offsets[19]) ?? [];
-  object.specificDates = reader.readStringList(offsets[20]) ?? [];
-  object.startDate = reader.readDateTime(offsets[21]);
-  object.supabaseId = reader.readStringOrNull(offsets[22]);
-  object.time1 = reader.readStringOrNull(offsets[23]);
-  object.time2 = reader.readStringOrNull(offsets[24]);
-  object.time3 = reader.readStringOrNull(offsets[25]);
-  object.userId = reader.readStringOrNull(offsets[26]);
+  object.imagePath = reader.readStringOrNull(offsets[14]);
+  object.isActive = reader.readBool(offsets[15]);
+  object.isAsNeeded = reader.readBool(offsets[16]);
+  object.isPaused = reader.readBool(offsets[17]);
+  object.isTaken = reader.readBool(offsets[18]);
+  object.lowStockAlerted = reader.readBool(offsets[19]);
+  object.name = reader.readString(offsets[20]);
+  object.notes = reader.readString(offsets[21]);
+  object.qty = reader.readLong(offsets[22]);
+  object.refillReminderThreshold = reader.readLongOrNull(offsets[23]);
+  object.scheduleType = reader.readString(offsets[24]);
+  object.slotTypes = reader.readStringList(offsets[25]) ?? [];
+  object.specificDates = reader.readStringList(offsets[26]) ?? [];
+  object.startDate = reader.readDateTime(offsets[27]);
+  object.strength = reader.readDoubleOrNull(offsets[28]);
+  object.strengthUnit = reader.readStringOrNull(offsets[29]);
+  object.supabaseId = reader.readStringOrNull(offsets[30]);
+  object.takeAmount = reader.readStringOrNull(offsets[31]);
+  object.time1 = reader.readStringOrNull(offsets[32]);
+  object.time2 = reader.readStringOrNull(offsets[33]);
+  object.time3 = reader.readStringOrNull(offsets[34]);
+  object.userId = reader.readStringOrNull(offsets[35]);
   return object;
 }
 
@@ -338,52 +437,70 @@ P _medicineEntityDeserializeProp<P>(
     case 2:
       return (reader.readLongOrNull(offset)) as P;
     case 3:
-      return (reader.readLong(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 4:
-      return (reader.readDateTimeOrNull(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 5:
-      return (reader.readStringList(offset) ?? []) as P;
+      return (reader.readLong(offset)) as P;
     case 6:
-      return (reader.readString(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 7:
-      return (reader.readLong(offset)) as P;
+      return (reader.readStringList(offset) ?? []) as P;
     case 8:
-      return (reader.readLong(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 9:
       return (reader.readLong(offset)) as P;
     case 10:
-      return (reader.readStringOrNull(offset)) as P;
-    case 11:
-      return (reader.readBool(offset)) as P;
-    case 12:
-      return (reader.readBool(offset)) as P;
-    case 13:
-      return (reader.readBool(offset)) as P;
-    case 14:
-      return (reader.readBool(offset)) as P;
-    case 15:
-      return (reader.readString(offset)) as P;
-    case 16:
-      return (reader.readString(offset)) as P;
-    case 17:
       return (reader.readLong(offset)) as P;
+    case 11:
+      return (reader.readStringOrNull(offset)) as P;
+    case 12:
+      return (reader.readStringOrNull(offset)) as P;
+    case 13:
+      return (reader.readLong(offset)) as P;
+    case 14:
+      return (reader.readStringOrNull(offset)) as P;
+    case 15:
+      return (reader.readBool(offset)) as P;
+    case 16:
+      return (reader.readBool(offset)) as P;
+    case 17:
+      return (reader.readBool(offset)) as P;
     case 18:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 19:
-      return (reader.readStringList(offset) ?? []) as P;
+      return (reader.readBool(offset)) as P;
     case 20:
-      return (reader.readStringList(offset) ?? []) as P;
+      return (reader.readString(offset)) as P;
     case 21:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 22:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readLong(offset)) as P;
     case 23:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readLongOrNull(offset)) as P;
     case 24:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 25:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readStringList(offset) ?? []) as P;
     case 26:
+      return (reader.readStringList(offset) ?? []) as P;
+    case 27:
+      return (reader.readDateTime(offset)) as P;
+    case 28:
+      return (reader.readDoubleOrNull(offset)) as P;
+    case 29:
+      return (reader.readStringOrNull(offset)) as P;
+    case 30:
+      return (reader.readStringOrNull(offset)) as P;
+    case 31:
+      return (reader.readStringOrNull(offset)) as P;
+    case 32:
+      return (reader.readStringOrNull(offset)) as P;
+    case 33:
+      return (reader.readStringOrNull(offset)) as P;
+    case 34:
+      return (reader.readStringOrNull(offset)) as P;
+    case 35:
       return (reader.readStringOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -827,6 +944,314 @@ extension MedicineEntityQueryFilter
         includeLower: includeLower,
         upper: upper,
         includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'color',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'color',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'color',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'color',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'color',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'color',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'color',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'color',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'color',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'color',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'color',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      colorIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'color',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'condition',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'condition',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'condition',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'condition',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'condition',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'condition',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'condition',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'condition',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'condition',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'condition',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'condition',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      conditionIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'condition',
+        value: '',
       ));
     });
   }
@@ -1435,6 +1860,314 @@ extension MedicineEntityQueryFilter
   }
 
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'foodInstruction',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'foodInstruction',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'foodInstruction',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'foodInstruction',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'foodInstruction',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'foodInstruction',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'foodInstruction',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'foodInstruction',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'foodInstruction',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'foodInstruction',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'foodInstruction',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      foodInstructionIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'foodInstruction',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'form',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'form',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'form',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'form',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'form',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'form',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'form',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'form',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'form',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'form',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'form',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      formIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'form',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
       frequencyEqualTo(int value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
@@ -1704,6 +2437,16 @@ extension MedicineEntityQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
         property: r'isActive',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      isAsNeededEqualTo(bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'isAsNeeded',
         value: value,
       ));
     });
@@ -2059,6 +2802,80 @@ extension MedicineEntityQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.between(
         property: r'qty',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      refillReminderThresholdIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'refillReminderThreshold',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      refillReminderThresholdIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'refillReminderThreshold',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      refillReminderThresholdEqualTo(int? value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'refillReminderThreshold',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      refillReminderThresholdGreaterThan(
+    int? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'refillReminderThreshold',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      refillReminderThresholdLessThan(
+    int? value, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'refillReminderThreshold',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      refillReminderThresholdBetween(
+    int? lower,
+    int? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'refillReminderThreshold',
         lower: lower,
         includeLower: includeLower,
         upper: upper,
@@ -2710,6 +3527,244 @@ extension MedicineEntityQueryFilter
   }
 
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'strength',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'strength',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthEqualTo(
+    double? value, {
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'strength',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthGreaterThan(
+    double? value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'strength',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthLessThan(
+    double? value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'strength',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthBetween(
+    double? lower,
+    double? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'strength',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'strengthUnit',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'strengthUnit',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'strengthUnit',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'strengthUnit',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'strengthUnit',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'strengthUnit',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'strengthUnit',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'strengthUnit',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'strengthUnit',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'strengthUnit',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'strengthUnit',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      strengthUnitIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'strengthUnit',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
       supabaseIdIsNull() {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(const FilterCondition.isNull(
@@ -2858,6 +3913,160 @@ extension MedicineEntityQueryFilter
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.greaterThan(
         property: r'supabaseId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'takeAmount',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'takeAmount',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'takeAmount',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'takeAmount',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'takeAmount',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'takeAmount',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'takeAmount',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'takeAmount',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'takeAmount',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'takeAmount',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'takeAmount',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterFilterCondition>
+      takeAmountIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'takeAmount',
         value: '',
       ));
     });
@@ -3527,6 +4736,31 @@ extension MedicineEntityQuerySortBy
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByColor() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'color', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByColorDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'color', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByCondition() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'condition', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByConditionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'condition', Sort.desc);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByCounter() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'counter', Sort.asc);
@@ -3594,6 +4828,32 @@ extension MedicineEntityQuerySortBy
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByFoodInstruction() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'foodInstruction', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByFoodInstructionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'foodInstruction', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByForm() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'form', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByFormDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'form', Sort.desc);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByFrequency() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'frequency', Sort.asc);
@@ -3630,6 +4890,20 @@ extension MedicineEntityQuerySortBy
       sortByIsActiveDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'isActive', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByIsAsNeeded() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isAsNeeded', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByIsAsNeededDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isAsNeeded', Sort.desc);
     });
   }
 
@@ -3710,6 +4984,20 @@ extension MedicineEntityQuerySortBy
   }
 
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByRefillReminderThreshold() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'refillReminderThreshold', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByRefillReminderThresholdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'refillReminderThreshold', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
       sortByScheduleType() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'scheduleType', Sort.asc);
@@ -3736,6 +5024,33 @@ extension MedicineEntityQuerySortBy
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> sortByStrength() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strength', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByStrengthDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strength', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByStrengthUnit() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strengthUnit', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByStrengthUnitDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strengthUnit', Sort.desc);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
       sortBySupabaseId() {
     return QueryBuilder.apply(this, (query) {
@@ -3747,6 +5062,20 @@ extension MedicineEntityQuerySortBy
       sortBySupabaseIdDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'supabaseId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByTakeAmount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'takeAmount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      sortByTakeAmountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'takeAmount', Sort.desc);
     });
   }
 
@@ -3841,6 +5170,31 @@ extension MedicineEntityQuerySortThenBy
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByColor() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'color', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByColorDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'color', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByCondition() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'condition', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByConditionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'condition', Sort.desc);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByCounter() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'counter', Sort.asc);
@@ -3908,6 +5262,32 @@ extension MedicineEntityQuerySortThenBy
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByFoodInstruction() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'foodInstruction', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByFoodInstructionDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'foodInstruction', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByForm() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'form', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByFormDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'form', Sort.desc);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByFrequency() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'frequency', Sort.asc);
@@ -3956,6 +5336,20 @@ extension MedicineEntityQuerySortThenBy
       thenByIsActiveDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'isActive', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByIsAsNeeded() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isAsNeeded', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByIsAsNeededDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isAsNeeded', Sort.desc);
     });
   }
 
@@ -4036,6 +5430,20 @@ extension MedicineEntityQuerySortThenBy
   }
 
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByRefillReminderThreshold() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'refillReminderThreshold', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByRefillReminderThresholdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'refillReminderThreshold', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
       thenByScheduleType() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'scheduleType', Sort.asc);
@@ -4062,6 +5470,33 @@ extension MedicineEntityQuerySortThenBy
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy> thenByStrength() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strength', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByStrengthDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strength', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByStrengthUnit() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strengthUnit', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByStrengthUnitDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'strengthUnit', Sort.desc);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
       thenBySupabaseId() {
     return QueryBuilder.apply(this, (query) {
@@ -4073,6 +5508,20 @@ extension MedicineEntityQuerySortThenBy
       thenBySupabaseIdDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'supabaseId', Sort.desc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByTakeAmount() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'takeAmount', Sort.asc);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QAfterSortBy>
+      thenByTakeAmountDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'takeAmount', Sort.desc);
     });
   }
 
@@ -4146,6 +5595,20 @@ extension MedicineEntityQueryWhereDistinct
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctByColor(
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'color', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctByCondition(
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'condition', caseSensitive: caseSensitive);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctByCounter() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'counter');
@@ -4188,6 +5651,21 @@ extension MedicineEntityQueryWhereDistinct
   }
 
   QueryBuilder<MedicineEntity, MedicineEntity, QDistinct>
+      distinctByFoodInstruction({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'foodInstruction',
+          caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctByForm(
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'form', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct>
       distinctByFrequency() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'frequency');
@@ -4204,6 +5682,13 @@ extension MedicineEntityQueryWhereDistinct
   QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctByIsActive() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'isActive');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct>
+      distinctByIsAsNeeded() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'isAsNeeded');
     });
   }
 
@@ -4247,6 +5732,13 @@ extension MedicineEntityQueryWhereDistinct
   }
 
   QueryBuilder<MedicineEntity, MedicineEntity, QDistinct>
+      distinctByRefillReminderThreshold() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'refillReminderThreshold');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct>
       distinctByScheduleType({bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'scheduleType', caseSensitive: caseSensitive);
@@ -4274,10 +5766,30 @@ extension MedicineEntityQueryWhereDistinct
     });
   }
 
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctByStrength() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'strength');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct>
+      distinctByStrengthUnit({bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'strengthUnit', caseSensitive: caseSensitive);
+    });
+  }
+
   QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctBySupabaseId(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'supabaseId', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<MedicineEntity, MedicineEntity, QDistinct> distinctByTakeAmount(
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'takeAmount', caseSensitive: caseSensitive);
     });
   }
 
@@ -4336,6 +5848,18 @@ extension MedicineEntityQueryProperty
     });
   }
 
+  QueryBuilder<MedicineEntity, String?, QQueryOperations> colorProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'color');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, String?, QQueryOperations> conditionProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'condition');
+    });
+  }
+
   QueryBuilder<MedicineEntity, int, QQueryOperations> counterProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'counter');
@@ -4374,6 +5898,19 @@ extension MedicineEntityQueryProperty
     });
   }
 
+  QueryBuilder<MedicineEntity, String?, QQueryOperations>
+      foodInstructionProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'foodInstruction');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, String?, QQueryOperations> formProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'form');
+    });
+  }
+
   QueryBuilder<MedicineEntity, int, QQueryOperations> frequencyProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'frequency');
@@ -4389,6 +5926,12 @@ extension MedicineEntityQueryProperty
   QueryBuilder<MedicineEntity, bool, QQueryOperations> isActiveProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'isActive');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, bool, QQueryOperations> isAsNeededProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'isAsNeeded');
     });
   }
 
@@ -4429,6 +5972,13 @@ extension MedicineEntityQueryProperty
     });
   }
 
+  QueryBuilder<MedicineEntity, int?, QQueryOperations>
+      refillReminderThresholdProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'refillReminderThreshold');
+    });
+  }
+
   QueryBuilder<MedicineEntity, String, QQueryOperations>
       scheduleTypeProperty() {
     return QueryBuilder.apply(this, (query) {
@@ -4456,9 +6006,28 @@ extension MedicineEntityQueryProperty
     });
   }
 
+  QueryBuilder<MedicineEntity, double?, QQueryOperations> strengthProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'strength');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, String?, QQueryOperations>
+      strengthUnitProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'strengthUnit');
+    });
+  }
+
   QueryBuilder<MedicineEntity, String?, QQueryOperations> supabaseIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'supabaseId');
+    });
+  }
+
+  QueryBuilder<MedicineEntity, String?, QQueryOperations> takeAmountProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'takeAmount');
     });
   }
 

@@ -42,4 +42,15 @@ class MedicineEntity {
   String notes = '';
   bool isPaused = false;
   bool lowStockAlerted = false;
+
+  // New fields for senior-friendly Wizard UI
+  String? form;
+  String? color;
+  double? strength;
+  String? strengthUnit;
+  String? takeAmount;
+  String? foodInstruction;
+  bool isAsNeeded = false;
+  int? refillReminderThreshold;
+  String? condition;
 }

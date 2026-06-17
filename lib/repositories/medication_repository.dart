@@ -71,6 +71,15 @@ class MedicationRepository {
       notes: medicine.notes,
       isPaused: medicine.isPaused,
       lowStockAlerted: medicine.lowStockAlerted,
+      form: medicine.form,
+      color: medicine.color,
+      strength: medicine.strength,
+      strengthUnit: medicine.strengthUnit,
+      takeAmount: medicine.takeAmount,
+      foodInstruction: medicine.foodInstruction,
+      isAsNeeded: medicine.isAsNeeded,
+      refillReminderThreshold: medicine.refillReminderThreshold,
+      condition: medicine.condition,
     );
     
     await _isar.writeTxn(() async {

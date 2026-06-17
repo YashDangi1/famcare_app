@@ -13,6 +13,7 @@ import '../services/offline_sync_service.dart';
 import '../utils/snackbar_utils.dart';
 import '../main.dart' show activeAlarmIdNotifier, kSnoozeOffset;
 import 'package:intl/intl.dart';
+import 'package:alarm/alarm.dart';
 
 class GroupAlarmScreen extends StatefulWidget {
   final int alarmId;
@@ -551,7 +552,31 @@ class _GroupAlarmScreenState extends State<GroupAlarmScreen>
             child: SafeArea(
               child: Column(
                 children: [
-                  const SizedBox(height: 40),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8, right: 16),
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: TextButton.icon(
+                        onPressed: () async {
+                          await Alarm.stop(widget.alarmId);
+                          if (mounted) {
+                            if (Navigator.canPop(context)) {
+                              Navigator.of(context).pop();
+                            } else {
+                              SystemNavigator.pop();
+                            }
+                          }
+                        },
+                        icon: const Icon(LucideIcons.home, color: Colors.white70, size: 18),
+                        label: const Text('Open App', style: TextStyle(color: Colors.white70)),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white.withValues(alpha: 0.1),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
 
                   // Top Status
                   Container(
