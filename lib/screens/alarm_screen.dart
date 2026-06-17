@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:alarm/alarm.dart';
 import '../services/alarm_service.dart';
 import '../services/notification_service.dart';
@@ -95,7 +95,11 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
       await _informFamilyOfMissedDose();
       
       if (mounted) {
-        Navigator.of(context).pop();
+        if (Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        } else {
+          SystemNavigator.pop();
+        }
       }
     } catch (e) {
       debugPrint("Error logging missed dose: $e");
@@ -184,7 +188,11 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
         debugPrint("No medicationId — dismissing alarm without DB update");
         if (mounted) {
           AppSnackBar.showSuccess(context, "Medicine marked as taken!");
-          Navigator.of(context).pop();
+          if (Navigator.canPop(context)) {
+            Navigator.of(context).pop();
+          } else {
+            SystemNavigator.pop();
+          }
         }
         return;
       }
@@ -200,7 +208,11 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
         debugPrint("Medication not found in DB — may have been deleted");
         if (mounted) {
           AppSnackBar.showSuccess(context, "Medicine marked as taken!");
-          Navigator.of(context).pop();
+          if (Navigator.canPop(context)) {
+            Navigator.of(context).pop();
+          } else {
+            SystemNavigator.pop();
+          }
         }
         return;
       }
@@ -242,7 +254,11 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
         } else {
           AppSnackBar.showSuccess(context, "Great! Medicine marked as taken");
         }
-        Navigator.of(context).pop();
+        if (Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        } else {
+          SystemNavigator.pop();
+        }
       }
     } catch (e) {
       debugPrint("Error in _onTakeIt: $e");
@@ -280,7 +296,11 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
 
       if (mounted) {
         AppSnackBar.showSuccess(context, "Reminder set for 30 min later");
-        Navigator.of(context).pop();
+        if (Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        } else {
+          SystemNavigator.pop();
+        }
       }
     } catch (e) {
       debugPrint("Error in _onTakeLater: $e");

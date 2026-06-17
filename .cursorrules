@@ -1,0 +1,22 @@
+# FamCare Context Engineering Rules
+
+## 1. Database Rule (Supabase)
+- STRICTLY PROHIBIT the use of `.single()`.
+- MANDATE `.maybeSingle()` for all single-row lookups.
+- Enforce explicit null-handling checks on the result to prevent unhandled `PostgrestException` crashes.
+
+## 2. UI & Design System Rules
+- **Colors:** Primary Blue (`#0EA5E9`), Dark Slate (`#1E293B`), Background (`#F8FAFC`).
+- **Color Implementation:** Strictly access colors via custom central setup or configured `Theme.of(context).colorScheme`. Do not let the AI hallucinate random material colors.
+- **Iconography:** Use the `lucide_icons` package strictly for all icons as per defined in pubspec (`^0.257.0`). Avoid `Icons.package` or `CupertinoIcons`.
+- **Animations:** Implement `flutter_animate` for screen entrances. Every list item and card element must explicitly cascade with `.fade().slideY()`.
+- **Loading States:** Replace standard `CircularProgressIndicator` with structured skeleton loaders using the `shimmer` package.
+
+## 3. Architecture & Performance
+- **Separation of Concerns:** Keep UI components strictly inside `lib/screens/` and functional business/network layer logic inside `lib/services/`.
+- **Main Thread Hygiene:** Never call blocking synchronous I/O operations (e.g., `File.existsSync()`, `Directory.listSync()`) directly inside a widget's `build()` method. Use asynchronous methods combined with `FutureBuilder` or state notifiers.
+- **State Optimization:** Prioritize `ValueNotifier` paired with `ValueListenableBuilder` for local atomic widget state updates to eliminate macro-level `setState` rebuild cycles.
+
+## 4. Native & Workflow Guardrails
+- **Native Updates:** When adding native permissions/configurations, synchronize updates cleanly across `android/app/src/main/AndroidManifest.xml` and `ios/Runner/Info.plist`.
+- **Conventional Commits:** Structure messages cleanly following the format: `<type>(<scope>): <description>`.

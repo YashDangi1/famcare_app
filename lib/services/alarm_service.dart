@@ -65,6 +65,7 @@ class AlarmService {
     required String dosage,
     required String imagePath,
     required DateTime time,
+    int qty = 0,
   }) async {
     final alarmSettings = AlarmSettings(
       id: id,
@@ -90,8 +91,13 @@ class AlarmService {
     debugPrint("Alarm.set() returned: $success for ID=$id at $time ($medicineName)");
 
     if (!success) {
-      debugPrint("WARNING: Alarm.set() returned false for ID=$id — alarm will NOT ring!");
-      return false;
+      debugPrint("WARNING: Alarm.set() returned false for ID=$id. Falling back to local notification.");
+      await _fallbackToLocalNotification(
+        id: id,
+        title: medicineName,
+        body: dosage,
+        time: time,
+      );
     }
 
     // Save medicine data for instant alarm screen — no DB needed
@@ -101,7 +107,7 @@ class AlarmService {
         'id': '',
         'name': medicineName,
         'dosage': dosage,
-        'qty': 0,
+        'qty': qty,
         'image_path': imagePath,
       }));
     } catch (e) {
@@ -115,6 +121,7 @@ class AlarmService {
   /// Cancels a single alarm
   Future<void> cancelAlarm(int id) async {
     await Alarm.stop(id);
+    await notificationsPlugin.cancel(id);
     debugPrint("Alarm cancelled: ID=$id");
   }
 
@@ -123,17 +130,19 @@ class AlarmService {
     for (final id in alarmIds) {
       if (id != null) {
         await Alarm.stop(id);
+        await notificationsPlugin.cancel(id);
       }
     }
   }
 
-  /// Schedules a 30-minute snooze alarm from the original scheduled time
-  Future<void> scheduleSnoozeAlarm({
+  /// Schedules a snooze alarm
+  Future<DateTime> scheduleSnoozeAlarm({
     required int originalId,
     required String medicineName,
     required DateTime originalTime,
+    int snoozeDurationMinutes = 30,
   }) async {
-    final fromOriginal = originalTime.add(const Duration(minutes: 30));
+    final fromOriginal = originalTime.add(Duration(minutes: snoozeDurationMinutes));
     final fromNow = DateTime.now().add(const Duration(minutes: 5));
     final snoozeTime =
         fromOriginal.isAfter(fromNow) ? fromOriginal : fromNow;
@@ -177,6 +186,7 @@ class AlarmService {
     }
 
     debugPrint("Snooze alarm set: ID=$snoozeId at $snoozeTime");
+    return snoozeTime;
   }
 
   /// Schedules one alarm for an entire slot group of medicines.
@@ -188,7 +198,7 @@ class AlarmService {
     required List<String> medicineNames,
     required String medicationIdsJson,
   }) async {
-    final alarmId = await _nextSlotAlarmId();
+    final alarmId = generateSlotAlarmId(slotKey);
 
     final title = _slotDisplayName(slotKey.split('_')[0]);
     final body = medicineNames.length == 1
@@ -229,6 +239,7 @@ class AlarmService {
       'medication_ids': jsonDecode(medicationIdsJson),
       'is_retry': false,
     }));
+    await prefs.setInt('active_group_alarm_$slotKey', alarmId);
 
     debugPrint('Group alarm set: ID=$alarmId slot=$slotKey at $alarmTime');
     return alarmId;
@@ -242,7 +253,7 @@ class AlarmService {
     required List<String> remainingMedicineNames,
     required String remainingMedicationIdsJson,
   }) async {
-    final alarmId = await _nextSlotAlarmId();
+    final alarmId = generateSlotAlarmId(slotKey, isRetry: true);
 
     final title = '${_slotDisplayName(slotKey.split('_')[0])} - Reminder';
     final body = remainingMedicineNames.length == 1
@@ -282,6 +293,7 @@ class AlarmService {
       'medication_ids': jsonDecode(remainingMedicationIdsJson),
       'is_retry': true,
     }));
+    await prefs.setInt('active_retry_alarm_$slotKey', alarmId);
 
     debugPrint('Retry alarm set: ID=$alarmId slot=$slotKey at $retryTime');
     return alarmId;
@@ -290,37 +302,27 @@ class AlarmService {
   /// Cancels the active group alarm and retry alarm for a slot key.
   Future<void> cancelSlotAlarms(String slotKey) async {
     final prefs = await SharedPreferences.getInstance();
-    final groupId = prefs.getInt('active_group_alarm_$slotKey');
-    final retryId = prefs.getInt('active_retry_alarm_$slotKey');
+    final groupId = prefs.getInt('active_group_alarm_$slotKey') ?? generateSlotAlarmId(slotKey);
+    final retryId = prefs.getInt('active_retry_alarm_$slotKey') ?? generateSlotAlarmId(slotKey, isRetry: true);
 
-    if (groupId != null) {
-      await Alarm.stop(groupId);
-      await prefs.remove('active_group_alarm_$slotKey');
-      await prefs.remove('group_alarm_$groupId');
-    }
-    if (retryId != null) {
-      await Alarm.stop(retryId);
-      await prefs.remove('active_retry_alarm_$slotKey');
-      await prefs.remove('group_alarm_$retryId');
-    }
+    await Alarm.stop(groupId);
+    await notificationsPlugin.cancel(groupId);
+    await prefs.remove('active_group_alarm_$slotKey');
+    await prefs.remove('group_alarm_$groupId');
+
+    await Alarm.stop(retryId);
+    await notificationsPlugin.cancel(retryId);
+    await prefs.remove('active_retry_alarm_$slotKey');
+    await prefs.remove('group_alarm_$retryId');
   }
 
-  /// Generates a unique alarm ID using a monotonic counter stored in SharedPreferences.
-  /// Avoids hashCode collisions and is deterministic across isolates.
-  static const int _maxSlotAlarmId = 800000;
-
-static Future<int> _nextSlotAlarmId() async {
-  final prefs = await SharedPreferences.getInstance();
-    int current = prefs.getInt('alarm_id_counter') ?? 1000;
-    if (current >= _maxSlotAlarmId) {
-      current = 1000;
-      await prefs.setInt('alarm_id_counter', 1000);
-      debugPrint('⚠️ Alarm ID counter reset to avoid snooze ID collision');
-    }
-    final next = current + 1;
-  await prefs.setInt('alarm_id_counter', next);
-  return next;
-}
+  /// Generates a unique, deterministic alarm ID using the slotKey.
+  /// Avoids hashCode collisions and unbounded counter growth.
+  static int generateSlotAlarmId(String slotKey, {bool isRetry = false}) {
+    final hash = slotKey.hashCode.abs();
+    final base = (hash % 400000) + 10000;
+    return isRetry ? base + 400000 : base;
+  }
 
   String _slotDisplayName(String slot) {
     switch (slot) {
@@ -387,6 +389,78 @@ static Future<int> _nextSlotAlarmId() async {
       details,
       payload: 'alarm_action_$alarmId',
     );
+  }
+
+  /// Cleans up shared preferences for alarms that no longer exist
+  Future<void> cleanupOrphanedPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final alarms = await Alarm.getAlarms();
+    final activeIds = alarms.map((a) => a.id).toSet();
+    
+    final keys = prefs.getKeys().toList();
+    for (final key in keys) {
+      if (key.startsWith('cached_med_')) {
+        final idStr = key.replaceFirst('cached_med_', '');
+        final id = int.tryParse(idStr);
+        if (id != null && !activeIds.contains(id)) {
+          await prefs.remove(key);
+        }
+      } else if (key.startsWith('group_alarm_')) {
+        final idStr = key.replaceFirst('group_alarm_', '');
+        final id = int.tryParse(idStr);
+        if (id != null && !activeIds.contains(id)) {
+          await prefs.remove(key);
+        }
+      }
+    }
+    debugPrint('cleanupOrphanedPrefs finished.');
+  }
+
+  Future<void> _fallbackToLocalNotification({
+    required int id,
+    required String title,
+    required String body,
+    required DateTime time,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      'famcare_fallback_alarms',
+      'Fallback Alarms',
+      channelDescription: 'Used when full-screen alarms cannot be scheduled',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const details = NotificationDetails(android: androidDetails);
+    
+    if (time.isBefore(DateTime.now())) {
+       time = time.add(const Duration(seconds: 5));
+    }
+    
+    try {
+      await notificationsPlugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tz.TZDateTime.from(time, tz.local),
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (e) {
+      debugPrint("Exact schedule failed, falling back to inexact: $e");
+      try {
+        await notificationsPlugin.zonedSchedule(
+          id,
+          title,
+          body,
+          tz.TZDateTime.from(time, tz.local),
+          details,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (e2) {
+         debugPrint("Inexact schedule also failed: $e2");
+      }
+    }
   }
 
   /// 9A — Schedules a daily summary notification at 10:00 PM.

@@ -10,9 +10,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:isar/isar.dart';
+import 'package:path_provider/path_provider.dart';
+import 'models/medicine_entity.dart';
+import 'providers/isar_provider.dart';
 import 'screens/alarm_screen.dart';
 import 'services/alarm_service.dart';
 import 'splash_screen.dart';
+import 'theme/app_theme.dart';
+import 'providers/theme_provider.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -249,7 +256,6 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
   if (groupData == null) return false;
 
   debugPrint('Group slot alarm detected: ID=$alarmId');
-  await Alarm.stop(alarmId);
 
   final decoded = jsonDecode(groupData) as Map<String, dynamic>;
   final slotKey = decoded['slot_key'] as String?;
@@ -606,7 +612,19 @@ void main() async {
   }
 
   // STEP 2: Show UI IMMEDIATELY — no blocking calls before runApp.
-  runApp(const MyApp());
+  // We only block for Isar which takes <10ms and is required for offline access.
+  final dir = await getApplicationDocumentsDirectory();
+  final isar = await Isar.open(
+    [MedicineEntitySchema],
+    directory: dir.path,
+  );
+
+  runApp(ProviderScope(
+    overrides: [
+      isarProvider.overrideWithValue(isar),
+    ],
+    child: const MyApp(),
+  ));
 
   // STEP 3: Supabase init — runs AFTER runApp so UI shows instantly.
   // In alarm mode, _AlarmScreenWrapper shows loading screen while this runs.
@@ -701,14 +719,14 @@ void main() async {
   });
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends ConsumerStatefulWidget {
   const MyApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
+  ConsumerState<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends ConsumerState<MyApp> {
   @override
   void initState() {
     super.initState();
@@ -728,68 +746,15 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     final activeAlarmId = activeAlarmIdNotifier.value;
+    final themeMode = ref.watch(themeProvider);
 
     return MaterialApp(
       title: 'FamCare',
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        primaryColor: const Color(0xFF0EA5E9),
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF0EA5E9),
-          primary: const Color(0xFF0EA5E9),
-        ),
-        fontFamily: 'Roboto',
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          centerTitle: true,
-          titleTextStyle: TextStyle(
-            color: Color(0xFF1E293B),
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-          iconTheme: IconThemeData(color: Color(0xFF1E293B)),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(15),
-            borderSide: BorderSide(color: Colors.grey[200]!),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(15),
-            borderSide: BorderSide(color: Colors.grey[200]!),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(15),
-            borderSide: const BorderSide(color: Color(0xFF0EA5E9), width: 2),
-          ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 0,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
-          ),
-          clipBehavior: Clip.antiAlias,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF0EA5E9),
-            foregroundColor: Colors.white,
-            minimumSize: const Size(double.infinity, 50),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            elevation: 0,
-          ),
-        ),
-      ),
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: themeMode,
       // When alarm is active, show ONLY the AlarmScreen — no home, no nav
       home: activeAlarmId != null
           ? _AlarmScreenWrapper(alarmId: activeAlarmId)

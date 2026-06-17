@@ -1,5 +1,7 @@
 import 'package:intl/intl.dart';
 
+import 'medicine_entity.dart';
+
 class Medicine {
   final String? id;
   final String? userId;
@@ -61,6 +63,66 @@ class Medicine {
     this.lowStockAlerted = false,
   });
 
+  Medicine copyWith({
+    String? id,
+    String? userId,
+    String? name,
+    String? dosage,
+    int? frequency,
+    String? time1,
+    String? time2,
+    String? time3,
+    int? alarmId1,
+    int? alarmId2,
+    int? alarmId3,
+    DateTime? startDate,
+    int? durationDays,
+    int? qty,
+    int? counter,
+    bool? isActive,
+    bool? isTaken,
+    String? imagePath,
+    DateTime? createdAt,
+    List<String>? slotTypes,
+    List<String>? customTimes,
+    String? scheduleType,
+    int? everyXDays,
+    List<String>? specificDates,
+    String? notes,
+    bool? isPaused,
+    bool? lowStockAlerted,
+  }) {
+    return Medicine(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      name: name ?? this.name,
+      dosage: dosage ?? this.dosage,
+      frequency: frequency ?? this.frequency,
+      time1: time1 ?? this.time1,
+      time2: time2 ?? this.time2,
+      time3: time3 ?? this.time3,
+      alarmId1: alarmId1 ?? this.alarmId1,
+      alarmId2: alarmId2 ?? this.alarmId2,
+      alarmId3: alarmId3 ?? this.alarmId3,
+      startDate: startDate ?? this.startDate,
+      durationDays: durationDays ?? this.durationDays,
+      qty: qty ?? this.qty,
+      counter: counter ?? this.counter,
+      isActive: isActive ?? this.isActive,
+      isTaken: isTaken ?? this.isTaken,
+      imagePath: imagePath ?? this.imagePath,
+      createdAt: createdAt ?? this.createdAt,
+      slotTypes: slotTypes ?? this.slotTypes,
+      customTimes: customTimes ?? this.customTimes,
+      scheduleType: scheduleType ?? this.scheduleType,
+      everyXDays: everyXDays ?? this.everyXDays,
+      specificDates: specificDates ?? this.specificDates,
+      notes: notes ?? this.notes,
+      isPaused: isPaused ?? this.isPaused,
+      lowStockAlerted: lowStockAlerted ?? this.lowStockAlerted,
+    );
+  }
+
   // startDate + durationDays - 1
   DateTime get endDate => startDate.add(Duration(days: durationDays - 1));
 
@@ -78,6 +140,69 @@ class Medicine {
     if (frequency >= 2 && time2 != null) times.add(time2!);
     if (frequency >= 3 && time3 != null) times.add(time3!);
     return times;
+  }
+
+  MedicineEntity toEntity() {
+    return MedicineEntity()
+      ..supabaseId = id
+      ..userId = userId
+      ..name = name
+      ..dosage = dosage
+      ..frequency = frequency
+      ..time1 = time1
+      ..time2 = time2
+      ..time3 = time3
+      ..alarmId1 = alarmId1
+      ..alarmId2 = alarmId2
+      ..alarmId3 = alarmId3
+      ..startDate = startDate
+      ..durationDays = durationDays
+      ..qty = qty
+      ..counter = counter
+      ..isActive = isActive
+      ..isTaken = isTaken
+      ..imagePath = imagePath
+      ..createdAt = createdAt
+      ..slotTypes = slotTypes
+      ..customTimes = customTimes
+      ..scheduleType = scheduleType
+      ..everyXDays = everyXDays
+      ..specificDates = specificDates
+      ..notes = notes
+      ..isPaused = isPaused
+      ..lowStockAlerted = lowStockAlerted;
+  }
+
+  factory Medicine.fromEntity(MedicineEntity entity) {
+    return Medicine(
+      id: entity.supabaseId,
+      userId: entity.userId,
+      name: entity.name,
+      dosage: entity.dosage,
+      frequency: entity.frequency,
+      time1: entity.time1,
+      time2: entity.time2,
+      time3: entity.time3,
+      alarmId1: entity.alarmId1,
+      alarmId2: entity.alarmId2,
+      alarmId3: entity.alarmId3,
+      startDate: entity.startDate,
+      durationDays: entity.durationDays,
+      qty: entity.qty,
+      counter: entity.counter,
+      isActive: entity.isActive,
+      isTaken: entity.isTaken,
+      imagePath: entity.imagePath,
+      createdAt: entity.createdAt,
+      slotTypes: entity.slotTypes,
+      customTimes: entity.customTimes,
+      scheduleType: entity.scheduleType,
+      everyXDays: entity.everyXDays,
+      specificDates: entity.specificDates,
+      notes: entity.notes,
+      isPaused: entity.isPaused,
+      lowStockAlerted: entity.lowStockAlerted,
+    );
   }
 
   // returns frequency as the dose count per day
@@ -169,14 +294,15 @@ class Medicine {
 
   /// Returns true if medicine should be active on given date
   bool isActiveOnDate(DateTime date) {
-    if (isPaused) return false;
+    if (isPaused || qty <= 0) return false;
     if (scheduleType == 'specific_dates') {
       final dateStr = DateFormat('yyyy-MM-dd').format(date);
       return specificDates.contains(dateStr);
     }
     if (scheduleType == 'every_x_days') {
       final daysDiff = date.difference(startDate).inDays;
-      return daysDiff >= 0 && daysDiff % everyXDays == 0;
+      final interval = everyXDays > 0 ? everyXDays : 1;
+      return daysDiff >= 0 && daysDiff % interval == 0;
     }
     return true; // daily
   }

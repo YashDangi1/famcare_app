@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -34,8 +34,8 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
           .from('appointments')
           .select()
           .eq('user_id', userId)
-          .gte('appointment_time', DateTime.now().toIso8601String())
-          .order('appointment_time', ascending: true);
+          .gte('appointment_date', DateTime.now().toIso8601String())
+          .order('appointment_date', ascending: true);
 
       if (mounted) {
         setState(() {
@@ -117,7 +117,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
 
   Widget _buildAppointmentCard(Map<String, dynamic> appt) {
     final doctorName = appt['doctor_name'] ?? 'Doctor';
-    final apptTime = DateTime.tryParse(appt['appointment_time']?.toString() ?? '')?.toLocal();
+    final apptTime = DateTime.tryParse(appt['appointment_date']?.toString() ?? '')?.toLocal();
     final notes = appt['notes']?.toString() ?? '';
     final reminderEnabled = appt['reminder_enabled'] == true;
 
@@ -241,7 +241,7 @@ class _AddAppointmentSheetState extends State<_AddAppointmentSheet> {
       final response = await _supabase.from('appointments').insert({
         'user_id': userId,
         'doctor_name': _doctorController.text.trim(),
-        'appointment_time': _selectedDateTime!.toUtc().toIso8601String(),
+        'appointment_date': _selectedDateTime!.toUtc().toIso8601String(),
         'notes': _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         'reminder_enabled': _reminderEnabled,
       }).select().maybeSingle();

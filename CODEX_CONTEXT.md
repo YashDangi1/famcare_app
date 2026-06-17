@@ -35,3 +35,9 @@ Flutter + Supabase + alarm v5.2.1
 - lib/meds_screen.dart (Bug 2, 4)
 - lib/main_app_shell.dart (Bug 3)
 - lib/screens/alarm_setup_screen.dart (Bug 5)
+
+
+Approve this plan.
+Answer the open questions:
+Riverpod is a strong choice.
+Isar is a good choice for offline-first and performance.

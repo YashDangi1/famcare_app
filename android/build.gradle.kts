@@ -22,3 +22,21 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+
+subprojects {
+    val configureNamespace = {
+        if (project.name == "isar_flutter_libs") {
+            val androidExt = project.extensions.findByName("android")
+            if (androidExt is com.android.build.gradle.LibraryExtension) {
+                if (androidExt.namespace == null) {
+                    androidExt.namespace = "dev.isar.isar_flutter_libs"
+                }
+            }
+        }
+    }
+    if (project.state.executed) {
+        configureNamespace()
+    } else {
+        project.afterEvaluate { configureNamespace() }
+    }
+}

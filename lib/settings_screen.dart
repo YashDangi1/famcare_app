@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -224,7 +224,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: const Text('Alarm Style', style: TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text(
                   _alarmStyleFullscreen
-                      ? 'Full screen alarm over lock screen'
+                      ? 'Full screen alarm over lock screen\n(Note: Android 10+ forces notifications if phone is unlocked)'
                       : 'Notification only (silent)',
                   style: const TextStyle(fontSize: 12),
                 ),

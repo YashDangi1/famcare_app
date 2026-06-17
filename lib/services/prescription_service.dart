@@ -4,6 +4,10 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../models/medicine_model.dart';
 
 class PrescriptionService {
+  final http.Client? httpClient;
+
+  PrescriptionService({this.httpClient});
+
   Future<List<Medicine>> parseWithAI(String text) async {
     final String? apiKey = dotenv.env['GEMINI_KEY'];
     if (apiKey == null || apiKey.isEmpty) {
@@ -16,7 +20,8 @@ class PrescriptionService {
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
     );
 
-    final response = await http
+    final client = httpClient ?? http.Client();
+    final response = await client
         .post(
           url,
           headers: {

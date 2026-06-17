@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:intl/intl.dart';
 import 'services/alarm_service.dart';
 import 'utils/snackbar_utils.dart';
@@ -23,7 +23,9 @@ import 'services/activity_service.dart';
 import 'services/notification_service.dart';
 import 'services/slot_preferences_service.dart';
 import 'screens/alarm_screen.dart';
+import 'screens/group_alarm_screen.dart';
 import 'screens/appointment_screen.dart';
+import 'package:alarm/alarm.dart';
 
 // ==========================================
 // 1. MAIN APP SHELL (Navigation + Alarm Logic)
@@ -286,6 +288,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    // Wait for dashboard data to load (up to 6 seconds)
+    int attempts = 0;
+    while ((_isLoading || _isRefreshingDashboard) && attempts < 20) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      attempts++;
+    }
+
     // Get medicines for this slot from state
     final medsForSlot = _todaysMeds.where((m) {
       final slotId = '${m.id}_$slotKey';
@@ -296,29 +305,48 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (medsForSlot.isEmpty || !mounted) return;
 
-    // Use first medicine for the alarm screen (most common case)
-    final med = medsForSlot.first;
-
     if (!mounted) return;
-    await Navigator.of(context).push(
+    
+    // Capture the result from GroupAlarmScreen
+    final result = await Navigator.of(context).push<dynamic>(
       MaterialPageRoute(
-        builder: (_) => AlarmScreen(
+        builder: (_) => GroupAlarmScreen(
           alarmId: activeAlarmIdNotifier.value ?? 0,
           isSnooze: false,
-          medicineName: medsForSlot.length == 1
-              ? med.name
-              : '${med.name} + ${medsForSlot.length - 1} more',
-          dosage: med.dosage,
-          qty: med.qty,
-          medicationId: med.id,
-          alarmSlot: 1,
+          medicines: medsForSlot,
+          slotKey: slotKey,
+          alarmSlot: _slotIndex(slotKey.startsWith('custom') ? 'custom' : slotKey),
           scheduledTime: DateTime.now(),
-          imagePath: med.imagePath,
         ),
       ),
     );
 
-    setState(() {});
+    // Process the result to handle partial selections (unticked medicines)
+    if (result is List<String>) {
+      setState(() {
+        if (result.isEmpty) {
+          // Skip All was tapped
+          for (final m in medsForSlot) {
+            _skippedSlotIds.add('${m.id}_$slotKey');
+          }
+        } else {
+          // Some or all medicines were taken
+          for (final medId in result) {
+            _takenSlotIdsToday.add('${medId}_$slotKey');
+          }
+        }
+      });
+    }
+
+    // Schedule a retry alarm for any remaining (unticked) medicines
+    await _checkAndScheduleRetry(slotKey);
+    
+    // Refresh dashboard to sync with DB
+    _initDashboard();
+    
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _checkBootReschedule() async {
@@ -344,13 +372,22 @@ class _HomeScreenState extends State<HomeScreen> {
         if (slot == 'custom') {
           for (int i = 0; i < med.customTimes.length; i++) {
             final alarmTime = _parseMedicineTimeForDate(med.customTimes[i], today);
-            if (alarmTime == null || alarmTime.isBefore(today)) continue;
+            if (alarmTime == null) continue;
             slotGroups.putIfAbsent('custom_${med.id}_$i', () => []).add(med);
           }
         } else {
-          final alarmTime = _getSlotAlarmTime(slot, med, today, slotPrefs);
-          if (alarmTime.isBefore(today)) continue;
           slotGroups.putIfAbsent(slot, () => []).add(med);
+        }
+      }
+    }
+
+    // Cancel orphaned slot alarms (slots that no longer have active medicines)
+    final keys = prefs.getKeys().toList();
+    for (final key in keys) {
+      if (key.startsWith('active_group_alarm_')) {
+        final slotKey = key.replaceFirst('active_group_alarm_', '');
+        if (!slotGroups.containsKey(slotKey)) {
+          await _alarmService.cancelSlotAlarms(slotKey);
         }
       }
     }
@@ -359,9 +396,20 @@ class _HomeScreenState extends State<HomeScreen> {
       final slotKey = entry.key;
       final meds = entry.value;
       final slot = slotKey.startsWith('custom') ? 'custom' : slotKey;
-      final alarmTime = _getSlotAlarmTime(slotKey, meds.first, today, slotPrefs);
+      DateTime alarmTime = _getSlotAlarmTime(slotKey, meds.first, today, slotPrefs);
+      
+      // If time has passed today, schedule for tomorrow
+      if (alarmTime.isBefore(today.subtract(const Duration(minutes: 1)))) {
+        alarmTime = alarmTime.add(const Duration(days: 1));
+      }
 
-      await _alarmService.cancelSlotAlarms(slotKey);
+      final groupId = AlarmService.generateSlotAlarmId(slotKey);
+      final existingAlarm = await Alarm.getAlarm(groupId);
+      if (existingAlarm != null && existingAlarm.dateTime.isBefore(today)) {
+        // Alarm is currently ringing/active! Do not overwrite/cancel it.
+        continue;
+      }
+
       final alarmId = await _alarmService.scheduleGroupSlotAlarm(
         slot: slot,
         slotKey: slotKey,
@@ -797,51 +845,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _slotKey(String medId, int slot) => '${medId}_$slot';
 
-  List<Map<String, dynamic>> _getUpcomingMedsInWindow() {
-    List<Map<String, dynamic>> upcoming = [];
-    final now = DateTime.now();
 
-    for (var med in _todaysMeds) {
-      final times = [med.time1, med.time2, med.time3];
-      for (int index = 0; index < times.length; index++) {
-        final timeStr = times[index];
-        final slot = index + 1;
-        if (timeStr != null && timeStr.isNotEmpty) {
-          try {
-            final parsedTime = DateFormat('hh:mm a').parse(timeStr.trim());
-            final scheduledDateTime = DateTime(
-              now.year,
-              now.month,
-              now.day,
-              parsedTime.hour,
-              parsedTime.minute,
-            );
-
-            final difference = scheduledDateTime.difference(now).inMinutes;
-            final slotKey = _slotKey(med.id ?? '', slot);
-
-            if (difference >= -15 &&
-                difference <= 30 &&
-                !_takenSlotIdsToday.contains(slotKey) &&
-                !_skippedSlotIds.contains(slotKey)) {
-              upcoming.add({
-                'medicine': med,
-                'slot': slot,
-                'time': timeStr,
-                'dateTime': scheduledDateTime,
-              });
-            }
-          } catch (e) {
-            debugPrint('Time parse error: $e');
-          }
-        }
-      }
-    }
-    upcoming.sort(
-      (a, b) => (a['dateTime'] as DateTime).compareTo(b['dateTime'] as DateTime),
-    );
-    return upcoming;
-  }
 
   /// Returns the slot start DateTime for today
   DateTime _slotStartToday(String slot) {
@@ -923,25 +927,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (slot == 'custom') {
           for (int i = 0; i < med.customTimes.length; i++) {
             final timeStr = med.customTimes[i];
-            DateTime? customAlarmTime;
-
-            try {
-              DateTime parsed;
-              if (timeStr.contains('AM') || timeStr.contains('PM')) {
-                parsed = DateFormat('hh:mm a').parseStrict(timeStr.trim());
-              } else {
-                parsed = DateFormat('HH:mm').parseStrict(timeStr.trim());
-              }
-              customAlarmTime = DateTime(
-                now.year,
-                now.month,
-                now.day,
-                parsed.hour,
-                parsed.minute,
-              );
-            } catch (_) {
-              continue;
-            }
+            final customAlarmTime = _parseMedicineTimeForDate(timeStr, now);
+            if (customAlarmTime == null) continue;
 
             final diff = customAlarmTime.difference(now).inMinutes;
             if (diff >= -30 && diff <= 15) {
@@ -1238,10 +1225,10 @@ class _HomeScreenState extends State<HomeScreen> {
       try {
         nextAppointment = await _supabase
             .from('appointments')
-            .select('doctor_name, appointment_time, notes')
+            .select('doctor_name, appointment_date, notes')
             .eq('user_id', userId)
-            .gte('appointment_time', DateTime.now().toIso8601String())
-            .order('appointment_time', ascending: true)
+            .gte('appointment_date', DateTime.now().toIso8601String())
+            .order('appointment_date', ascending: true)
             .limit(1)
             .maybeSingle();
       } catch (e) {
@@ -1260,9 +1247,8 @@ class _HomeScreenState extends State<HomeScreen> {
           final slot = i + 1;
 
           try {
-            final format = DateFormat("hh:mm a");
-            final tod = format.parse(timeStr);
-            final scheduledTime = DateTime(today.year, today.month, today.day, tod.hour, tod.minute);
+            final scheduledTime = _parseMedicineTimeForDate(timeStr, today);
+            if (scheduledTime == null) continue;
 
             // Check if already taken today
             bool alreadyTaken = allLogs.any((log) =>
@@ -1311,21 +1297,25 @@ class _HomeScreenState extends State<HomeScreen> {
       final profileData = await _supabase.from('profiles').select('full_name').eq('id', userId).maybeSingle();
       if (profileData != null && mounted) setState(() => _fullName = profileData['full_name']);
 
+      final List<Future<void>> imageChecks = [];
+      final Set<String> existingImages = {};
+      for (final m in todaysMeds) {
+        if (m.imagePath != null && m.imagePath!.isNotEmpty) {
+          imageChecks.add(File(m.imagePath!).exists().then((exists) {
+            if (exists) existingImages.add(m.imagePath!);
+          }));
+        }
+      }
+      await Future.wait(imageChecks);
+
       if (mounted) {
         setState(() {
           _todaysMeds = todaysMeds;
           _allMeds = allMeds;
           _slotPrefs = slotPrefs;
-          _existingImagePaths.clear();
-          final List<Future<void>> imageChecks = [];
-          for (final m in todaysMeds) {
-            if (m.imagePath != null && m.imagePath!.isNotEmpty) {
-              imageChecks.add(File(m.imagePath!).exists().then((exists) {
-                if (exists) _existingImagePaths.add(m.imagePath!);
-              }));
-            }
-          }
-          await Future.wait(imageChecks);
+          _existingImagePaths
+            ..clear()
+            ..addAll(existingImages);
           _takenSlotIdsToday
             ..clear()
             ..addAll(hiddenSlotIds);
@@ -1543,36 +1533,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Builder(
-                      builder: (context) {
-                        final dueSoonKeys = _cachedDueSoon
-                            .map((m) => _slotKey((m['medicine'] as Medicine).id ?? '', m['slot'] as int))
-                            .toSet();
-                        final upcoming = _getUpcomingMedsInWindow()
-                            .where((item) {
-                              final med = item['medicine'] as Medicine;
-                              final slotKey = _slotKey(med.id ?? '', item['slot'] as int);
-                              return !dueSoonKeys.contains(slotKey);
-                            })
-                            .toList();
-                        if (upcoming.isEmpty) return const SizedBox.shrink();
 
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Today\'s Medicines',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF334155)),
-                            ),
-                            const SizedBox(height: 12),
-                            ...upcoming.map((item) {
-                              return _buildTodayMedicineCard(item);
-                            }),
-                            const SizedBox(height: 25),
-                          ],
-                        );
-                      },
-                    ),
 
                     // Due Soon Panel — slot-based, max 4 visible, animated removal
                     Builder(
@@ -1792,111 +1753,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildTodayMedicineCard(Map<String, dynamic> item) {
-    final med = item['medicine'] as Medicine;
-    final imagePath = med.imagePath;
-    final hasImage = imagePath != null && imagePath.isNotEmpty && _existingImagePaths.contains(imagePath);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey[100]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 50,
-            height: 50,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0EA5E9).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: hasImage
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.file(
-                      File(imagePath),
-                      fit: BoxFit.cover,
-                    ),
-                  )
-                : const Icon(LucideIcons.pill, color: Color(0xFF0EA5E9), size: 26),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  med.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: Color(0xFF1E293B),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0EA5E9).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: const Color(0xFF0EA5E9).withValues(alpha: 0.2),
-                    ),
-                  ),
-                  child: Text(
-                    item['time'] as String,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0EA5E9),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'Will ring at scheduled time',
-                onPressed: () => _onSkipWindow(item),
-                icon: const Icon(Icons.cancel, color: Colors.red, size: 30),
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.red.withValues(alpha: 0.1),
-                  padding: const EdgeInsets.all(8),
-                ),
-              ),
-              const SizedBox(width: 6),
-              IconButton(
-                tooltip: 'Mark as taken early',
-                onPressed: () => _onEarlyTake(item),
-                icon: const Icon(Icons.check_circle, color: Colors.green, size: 30),
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.green.withValues(alpha: 0.1),
-                  padding: const EdgeInsets.all(8),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildDueSoonCard(Map<String, dynamic> item) {
     final med = item['medicine'] as Medicine;
@@ -2138,7 +1995,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildNextAppointmentCard() {
     final appt = _nextAppointment!;
     final doctorName = appt['doctor_name'] ?? 'Doctor';
-    final apptTime = DateTime.tryParse(appt['appointment_time']?.toString() ?? '')?.toLocal();
+    final apptTime = DateTime.tryParse(appt['appointment_date']?.toString() ?? '')?.toLocal();
     final notes = appt['notes']?.toString() ?? '';
     final dateStr = apptTime != null ? DateFormat('EEE, dd MMM • hh:mm a').format(apptTime) : '';
 

@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:lucide_icons/lucide_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:app_settings/app_settings.dart';
 import 'package:device_info_plus/device_info_plus.dart';
@@ -133,15 +133,16 @@ class _AlarmSetupScreenState extends State<AlarmSetupScreen>
       builder: (_) => AlertDialog(
         title: const Text('Permission Required'),
         content: const Text(
-          'Your phone has restricted this permission.\n\n'
-          'To enable manually:\n'
-          '1. Go to Settings -> Apps -> FamCare\n'
-          '2. Tap "Display over other apps" -> Enable\n\n'
-          'If blocked by security app:\n'
-          'Settings -> Security -> Special app access -> '
-          'Display over other apps -> FamCare -> Allow\n\n'
-          'Without this, alarm screen won\'t show on '
-          'lock screen but sound notifications will work.',
+          'Android may have restricted this permission.\n\n'
+          'IMPORTANT - If the setting is greyed out (Restricted Setting):\n'
+          '1. Go to phone Settings -> Apps -> FamCare\n'
+          '2. Tap the 3 vertical dots (top right) ⠇\n'
+          '3. Tap "Allow restricted settings"\n'
+          '4. Enter your phone PIN/password\n\n'
+          'Then to enable the permission:\n'
+          '1. Scroll down to "Display over other apps"\n'
+          '2. Turn it ON\n\n'
+          'Without this, alarm screen won\'t show on lock screen.',
         ),
         actions: [
           TextButton(

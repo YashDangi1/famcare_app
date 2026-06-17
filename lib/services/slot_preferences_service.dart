@@ -19,14 +19,30 @@ class SlotPreferencesService {
   Future<void> savePreferences(Map<String, dynamic> prefs) async {
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
-    await _supabase.from('user_slot_preferences').upsert(
-      {
-        'user_id': userId,
-        ...prefs,
-        'updated_at': DateTime.now().toIso8601String(),
-      },
-      onConflict: 'user_id',
-    );
+    try {
+      await _supabase.from('user_slot_preferences').upsert(
+        {
+          'user_id': userId,
+          ...prefs,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        onConflict: 'user_id',
+      );
+    } catch (e) {
+      if (e is PostgrestException && e.message.contains('retry_interval')) {
+        final fallbackPrefs = Map<String, dynamic>.from(prefs)..remove('retry_interval');
+        await _supabase.from('user_slot_preferences').upsert(
+          {
+            'user_id': userId,
+            ...fallbackPrefs,
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          onConflict: 'user_id',
+        );
+      } else {
+        rethrow;
+      }
+    }
   }
 
   Map<String, dynamic> _defaults() => {
