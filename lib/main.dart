@@ -16,7 +16,10 @@ import 'package:path_provider/path_provider.dart';
 import 'models/medicine_entity.dart';
 import 'providers/isar_provider.dart';
 import 'screens/alarm_screen.dart';
+import 'screens/group_alarm_screen.dart';
+import 'main_app_shell.dart';
 import 'services/alarm_service.dart';
+import 'services/slot_preferences_service.dart';
 import 'splash_screen.dart';
 import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
@@ -293,20 +296,18 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
     }
   } catch (_) {}
 
+  // Wait for navigator to be ready and app to be initialized
   int attempts = 0;
   while (navigatorKey.currentState == null && attempts < 20) {
     await Future.delayed(const Duration(milliseconds: 300));
     attempts++;
   }
 
-  if (navigatorKey.currentState != null) {
-    // Clear pending flag since we navigated
-    try {
-      final clearPrefs = await SharedPreferences.getInstance();
-      await clearPrefs.remove('pending_group_slot_alarm');
-    } catch (_) {}
-    navigatorKey.currentState!.pushNamedAndRemoveUntil('/', (route) => false);
-  }
+  // Clear pending flag
+  try {
+    final clearPrefs = await SharedPreferences.getInstance();
+    await clearPrefs.remove('pending_group_slot_alarm');
+  } catch (_) {}
   return true;
 }
 
@@ -369,6 +370,24 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
     await Alarm.stop(alarmId);
     await AlarmService().notificationsPlugin.cancel(alarmId); // Cancel native notification
 
+    // Check if it's a group alarm
+    final prefs = await SharedPreferences.getInstance();
+    final groupData = prefs.getString('group_alarm_$alarmId');
+    if (groupData != null) {
+      debugPrint("Notification 'I Took It' for group alarm $alarmId — opening GroupAlarmScreen");
+      final decoded = jsonDecode(groupData) as Map<String, dynamic>;
+      final slotKey = decoded['slot_key'] as String?;
+      if (slotKey != null) {
+        activeSlotAlarmNotifier.value = slotKey;
+      }
+      // Clean up
+      try {
+        await prefs.remove('group_alarm_$alarmId');
+        await prefs.remove('alarm_scheduled_time_$alarmId');
+      } catch (_) {}
+      return;
+    }
+
     // BUG 4: Wait for Supabase using _supabaseReady bool
     int attempts = 0;
     while (!_supabaseReady && attempts < 20) {
@@ -418,7 +437,6 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
     if (med['alarm_id3'] == originalId) slot = 3;
 
     // Read original scheduled time from cache
-    final prefs = await SharedPreferences.getInstance();
     final scheduledStr = prefs.getString('alarm_scheduled_time_$alarmId');
     final scheduledTime = scheduledStr != null
         ? DateTime.parse(scheduledStr)
@@ -459,6 +477,51 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
   try {
     await Alarm.stop(alarmId);
     await AlarmService().notificationsPlugin.cancel(alarmId); // Cancel native notification
+
+    // Check if it's a group alarm
+    final prefs = await SharedPreferences.getInstance();
+    final groupData = prefs.getString('group_alarm_$alarmId');
+    if (groupData != null) {
+      debugPrint("Notification 'Take Later' for group alarm $alarmId — scheduling retry");
+      final decoded = jsonDecode(groupData) as Map<String, dynamic>;
+      final slot = decoded['slot'] as String?;
+      final slotKey = decoded['slot_key'] as String?;
+      final medicineNames = decoded['medicine_names'] as List<dynamic>?;
+      final medicationIds = decoded['medication_ids'] as List<dynamic>?;
+
+      if (slot != null && slotKey != null && medicineNames != null && medicationIds != null) {
+        // Wait for Supabase
+        int attempts = 0;
+        while (!_supabaseReady && attempts < 20) {
+          await Future.delayed(const Duration(milliseconds: 300));
+          attempts++;
+        }
+        if (!_supabaseReady) {
+          debugPrint('Supabase not ready after timeout — cannot schedule retry');
+          return;
+        }
+
+        // Get retry interval from preferences
+        final slotPrefs = await SlotPreferencesService().getPreferences();
+        final retryInterval = slotPrefs['retry_interval'] as int? ?? 30;
+        final retryTime = DateTime.now().add(Duration(minutes: retryInterval));
+
+        // Schedule retry alarm
+        await AlarmService().scheduleRetryAlarm(
+          slot: slot,
+          slotKey: slotKey,
+          retryTime: retryTime,
+          remainingMedicineNames: medicineNames.cast<String>(),
+          remainingMedicationIdsJson: jsonEncode(medicationIds),
+        );
+      }
+      // Clean up
+      try {
+        await prefs.remove('group_alarm_$alarmId');
+        await prefs.remove('alarm_scheduled_time_$alarmId');
+      } catch (_) {}
+      return;
+    }
 
     // BUG 4: Wait for Supabase using _supabaseReady bool
     int attempts = 0;
@@ -503,7 +566,6 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
     }
 
     // Schedule snooze from ORIGINAL scheduled time, not DateTime.now()
-    final prefs = await SharedPreferences.getInstance();
     final scheduledStr = prefs.getString('alarm_scheduled_time_$alarmId');
     final scheduledTime = scheduledStr != null
         ? DateTime.parse(scheduledStr)
@@ -773,11 +835,13 @@ class _MyAppState extends ConsumerState<MyApp> {
   void initState() {
     super.initState();
     activeAlarmIdNotifier.addListener(_onAlarmChanged);
+    activeSlotAlarmNotifier.addListener(_onAlarmChanged);
   }
 
   @override
   void dispose() {
     activeAlarmIdNotifier.removeListener(_onAlarmChanged);
+    activeSlotAlarmNotifier.removeListener(_onAlarmChanged);
     super.dispose();
   }
 
@@ -788,6 +852,7 @@ class _MyAppState extends ConsumerState<MyApp> {
   @override
   Widget build(BuildContext context) {
     final activeAlarmId = activeAlarmIdNotifier.value;
+    final activeSlotKey = activeSlotAlarmNotifier.value;
     final themeMode = ref.watch(themeProvider);
 
     return MaterialApp(
@@ -800,7 +865,43 @@ class _MyAppState extends ConsumerState<MyApp> {
       // When alarm is active, show ONLY the AlarmScreen — no home, no nav
       home: activeAlarmId != null
           ? _AlarmScreenWrapper(alarmId: activeAlarmId)
-          : const SplashScreen(),
+          : activeSlotKey != null
+              ? const _SlotAlarmWrapper()
+              : const SplashScreen(),
+    );
+  }
+}
+
+/// Wrapper for slot alarms that navigates to GroupAlarmScreen when app starts up
+class _SlotAlarmWrapper extends ConsumerStatefulWidget {
+  const _SlotAlarmWrapper();
+
+  @override
+  ConsumerState<_SlotAlarmWrapper> createState() => _SlotAlarmWrapperState();
+}
+
+class _SlotAlarmWrapperState extends ConsumerState<_SlotAlarmWrapper> {
+  @override
+  void initState() {
+    super.initState();
+    // Wait for app to initialize, then navigate to HomeScreen so GroupAlarmScreen can open
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const MainAppShell(),
+          ),
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF0D1117),
+      body: SizedBox.expand(),
     );
   }
 }

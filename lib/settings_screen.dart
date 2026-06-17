@@ -9,6 +9,7 @@ import 'screens/alarm_setup_screen.dart';
 import 'utils/snackbar_utils.dart';
 import 'login_screen.dart';
 import 'services/slot_preferences_service.dart';
+import 'main.dart' show medicineUpdatedNotifier;
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -509,6 +510,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
       _slotPrefs['retry_interval'] = _retryInterval;
       await _slotService.savePreferences(_slotPrefs);
+      // Trigger medicine updated notifier to reschedule alarms with new slot times
+      medicineUpdatedNotifier.value++;
       if (mounted) AppSnackBar.showSuccess(context, 'Schedule times saved!');
     } catch (e) {
       if (mounted) AppSnackBar.showError(context, 'Error saving: $e');
