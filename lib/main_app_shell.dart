@@ -290,9 +290,16 @@ class _HomeScreenState extends State<HomeScreen> {
     // Get medicines for this slot from state
     final medsForSlot = _todaysMeds.where((m) {
       final slotId = '${m.id}_$slotKey';
-      return !_takenSlotIdsToday.contains(slotId) &&
-             !_skippedSlotIds.contains(slotId) &&
-             (m.slotTypes.contains(slotKey) || slotKey.startsWith('custom'));
+      if (_takenSlotIdsToday.contains(slotId) || _skippedSlotIds.contains(slotId)) return false;
+
+      if (slotKey.startsWith('custom')) {
+        final parts = slotKey.split('_');
+        if (parts.length < 3) return false;
+        final medId = parts.sublist(1, parts.length - 1).join('_');
+        return m.id == medId;
+      } else {
+        return m.slotTypes.contains(slotKey);
+      }
     }).toList();
 
     if (medsForSlot.isEmpty || !mounted) return;
@@ -973,7 +980,11 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         } else {
           // Medicine is due if current time is within the slot range
-          if (_isTimeInSlot(slot, now)) {
+          // OR if it's within 15 mins before the slot starts.
+          final slotStart = _getActiveSlotStart(slot, now);
+          final diff = slotStart.difference(now).inMinutes;
+          
+          if (_isTimeInSlot(slot, now) || (diff >= 0 && diff <= 15)) {
             final slotIdx = _slotIndex(slot);
             final slotId = _slotKey(med.id ?? '', slotIdx);
             if (!_takenSlotIdsToday.contains(slotId) &&
@@ -983,7 +994,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 'slot': slotIdx,
                 'slotKey': slot,
                 'slotName': _slotNameLabel(slot),
-                'dateTime': _getActiveSlotStart(slot, now),
+                'dateTime': slotStart,
               });
             }
           }
@@ -997,19 +1008,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return dueSoon;
   }
 
-  /// FIX 3: Remove item from AnimatedList with slide animation
+  /// FIX 3: Remove item
   void _removeDueSoonItem(Map<String, dynamic> item) {
     final index = _cachedDueSoon.indexOf(item);
     if (index < 0) return;
-    final removedItem = _cachedDueSoon.removeAt(index);
-    _dueSoonListKey.currentState?.removeItem(
-      index,
-      (context, animation) => SizeTransition(
-        sizeFactor: animation,
-        child: _buildDueSoonCard(removedItem),
-      ),
-      duration: const Duration(milliseconds: 300),
-    );
+    setState(() {
+      _cachedDueSoon.removeAt(index);
+    });
   }
 
   Future<void> _onEarlyTake(Map<String, dynamic> med) async {
@@ -1563,8 +1568,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     // Due Soon Panel — slot-based, max 4 visible, animated removal
                     Builder(
                       builder: (context) {
-                        if (_isDueSoonHidden) return const SizedBox.shrink();
-                        
                         _cachedDueSoon = _getDueSoonMeds();
                         if (_cachedDueSoon.isEmpty) return const SizedBox.shrink();
                         
@@ -1616,18 +1619,17 @@ class _HomeScreenState extends State<HomeScreen> {
                                         ),
                                       ),
                                       const Spacer(),
-                                      InkWell(
-                                        onTap: () => setState(() => _isDueSoonCollapsed = !_isDueSoonCollapsed),
-                                        child: Icon(
-                                          _isDueSoonCollapsed ? LucideIcons.chevronDown : LucideIcons.chevronUp,
-                                          color: Colors.white,
-                                          size: 20,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      InkWell(
-                                        onTap: () => setState(() => _isDueSoonHidden = true),
-                                        child: const Icon(LucideIcons.x, color: Colors.white, size: 20),
+                                      Row(
+                                        children: [
+                                          InkWell(
+                                            onTap: () => setState(() => _isDueSoonCollapsed = !_isDueSoonCollapsed),
+                                            child: Icon(
+                                              _isDueSoonCollapsed ? LucideIcons.chevronDown : LucideIcons.chevronUp,
+                                              color: Colors.white,
+                                              size: 20,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
@@ -1636,17 +1638,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                     AnimatedContainer(
                                       duration: const Duration(milliseconds: 300),
                                       height: panelHeight,
-                                      child: AnimatedList(
-                                        key: _dueSoonListKey,
-                                        padding: EdgeInsets.zero,
-                                        initialItemCount: _cachedDueSoon.length,
-                                        itemBuilder: (context, index, animation) {
-                                          if (index >= _cachedDueSoon.length) return const SizedBox.shrink();
-                                          return SizeTransition(
-                                            sizeFactor: animation,
-                                            child: _buildDueSoonCard(_cachedDueSoon[index]),
-                                          );
-                                        },
+                                      child: SingleChildScrollView(
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        child: Column(
+                                          children: _cachedDueSoon.map((item) {
+                                            return _buildDueSoonCard(item);
+                                          }).toList(),
+                                        ),
                                       ),
                                     ),
                                   ],

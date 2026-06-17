@@ -271,9 +271,16 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
     
     // Trigger notification
     final medListString = medicineNames?.join(', ') ?? 'Medicines';
+    String formattedSlot = slotKey ?? "Unknown";
+    if (formattedSlot.startsWith('custom')) {
+      formattedSlot = 'Custom Time';
+    } else if (formattedSlot.isNotEmpty) {
+      formattedSlot = formattedSlot[0].toUpperCase() + formattedSlot.substring(1);
+    }
+
     await AlarmService().showActionNotification(
       alarmId: alarmId,
-      medicineName: 'Slot: ${slotKey ?? "Unknown"}',
+      medicineName: 'Slot: $formattedSlot',
       dosage: medListString,
       scheduledTime: DateTime.now(), // Approximate
     );
@@ -315,6 +322,21 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
 // @pragma required for flutter_local_notifications background callback
 @pragma('vm:entry-point')
 void _onNotificationResponse(NotificationResponse response) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  if (!_supabaseReady) {
+    try {
+      await dotenv.load(fileName: '.env');
+      await Supabase.initialize(
+        url: dotenv.env['SUPABASE_URL'] ?? '',
+        anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
+      );
+      _supabaseReady = true;
+    } catch (e) {
+      debugPrint("Background supabase init failed: $e");
+    }
+  }
+
   final actionId = response.actionId ?? '';
   final payload = response.payload ?? '';
   debugPrint("=== NOTIFICATION RESPONSE === actionId: $actionId, payload: $payload");
@@ -374,12 +396,53 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
     final prefs = await SharedPreferences.getInstance();
     final groupData = prefs.getString('group_alarm_$alarmId');
     if (groupData != null) {
-      debugPrint("Notification 'I Took It' for group alarm $alarmId — opening GroupAlarmScreen");
+      debugPrint("Notification 'I Took It' for group alarm $alarmId");
       final decoded = jsonDecode(groupData) as Map<String, dynamic>;
       final slotKey = decoded['slot_key'] as String?;
-      if (slotKey != null) {
-        activeSlotAlarmNotifier.value = slotKey;
+      final medIdsJson = decoded['medication_ids'] as List<dynamic>?;
+      
+      if (slotKey != null && medIdsJson != null) {
+        final medIds = medIdsJson.cast<String>();
+        final slotStr = slotKey.startsWith('custom') ? 'custom' : slotKey;
+        int slotIndex = 1;
+        if (slotStr == 'morning') slotIndex = 1;
+        else if (slotStr == 'afternoon') slotIndex = 2;
+        else if (slotStr == 'evening') slotIndex = 3;
+        else if (slotStr == 'night') slotIndex = 4;
+        else slotIndex = 5;
+
+        final supabase = Supabase.instance.client;
+        final userId = supabase.auth.currentUser?.id;
+        
+        if (userId != null && _supabaseReady) {
+          final scheduledStr = prefs.getString('alarm_scheduled_time_$alarmId');
+          final scheduledTime = scheduledStr != null ? DateTime.parse(scheduledStr) : DateTime.now();
+
+          for (final medId in medIds) {
+             final med = await supabase.from('medications').select('*').eq('id', medId).maybeSingle().timeout(const Duration(seconds: 5));
+             if (med == null) continue;
+
+             final currentQty = int.tryParse(med['qty']?.toString() ?? '0') ?? 0;
+             final newQty = (currentQty - 1).clamp(0, 99999);
+             await supabase.from('medications').update({'qty': newQty}).eq('id', medId);
+             if (newQty == 0) {
+               await supabase.from('medications').update({'is_active': false}).eq('id', medId);
+             }
+
+             await supabase.from('medicine_logs').insert({
+               'user_id': userId,
+               'medication_id': medId,
+               'medicine_name': med['name'] ?? 'Medicine',
+               'dosage': med['dosage'] ?? '1 dose',
+               'status': 'taken',
+               'alarm_slot': slotIndex,
+               'scheduled_time': scheduledTime.toIso8601String(),
+               'created_at': DateTime.now().toIso8601String(),
+             });
+          }
+        }
       }
+      
       // Clean up
       try {
         await prefs.remove('group_alarm_$alarmId');
