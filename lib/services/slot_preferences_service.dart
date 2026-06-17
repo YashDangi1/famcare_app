@@ -50,5 +50,6 @@ class SlotPreferencesService {
     'afternoon_start': '12:00', 'afternoon_end': '14:00',
     'evening_start': '16:00', 'evening_end': '18:00',
     'night_start': '21:00', 'night_end': '22:30',
+    'retry_interval': 30,
   };
 }

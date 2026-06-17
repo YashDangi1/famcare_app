@@ -761,15 +761,188 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
     );
   }
 
-  // Placeholder for multi date picker
   Future<void> _showMultiDatePicker() async {
-    // simplified for wizard
-    final date = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
-    if (date != null) {
-      setState(() {
-        specificDates.add(DateFormat('yyyy-MM-dd').format(date));
-        recalcQty();
-      });
-    }
+    final selectedDates = Set<DateTime>.from(specificDates.map((d) => DateTime.parse(d)));
+    
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, sheetState) {
+          final dates = List.generate(365, (i) => DateTime.now().add(Duration(days: i)));
+
+          return DraggableScrollableSheet(
+            initialChildSize: 0.6,
+            maxChildSize: 0.9,
+            minChildSize: 0.4,
+            expand: false,
+            builder: (_, scrollCtrl) => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Select Dates',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${selectedDates.length} selected',
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Wrap(
+                    spacing: 8,
+                    children: [
+                      ActionChip(
+                        label: const Text('Today'),
+                        onPressed: () {
+                          sheetState(() {
+                            selectedDates.add(DateTime.now());
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('Next 7 Days'),
+                        onPressed: () {
+                          sheetState(() {
+                            for (int i = 0; i < 7; i++) {
+                              selectedDates.add(DateTime.now().add(Duration(days: i)));
+                            }
+                          });
+                        },
+                      ),
+                      ActionChip(
+                        label: const Text('Next 30 Days'),
+                        onPressed: () {
+                          sheetState(() {
+                            for (int i = 0; i < 30; i++) {
+                              selectedDates.add(DateTime.now().add(Duration(days: i)));
+                            }
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: GridView.builder(
+                    controller: scrollCtrl,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 7,
+                      mainAxisSpacing: 4,
+                      crossAxisSpacing: 4,
+                      childAspectRatio: 1,
+                    ),
+                    itemCount: dates.length,
+                    itemBuilder: (_, i) {
+                      final date = dates[i];
+                      final isSelected = selectedDates.any((d) => d.year == date.year && d.month == date.month && d.day == date.day);
+                      final isToday = DateTime.now().year == date.year && DateTime.now().month == date.month && DateTime.now().day == date.day;
+                      return GestureDetector(
+                        onTap: () {
+                          sheetState(() {
+                            if (isSelected) {
+                              selectedDates.removeWhere((d) => d.year == date.year && d.month == date.month && d.day == date.day);
+                            } else {
+                              selectedDates.add(date);
+                            }
+                          });
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? const Color(0xFF0EA5E9)
+                                : isToday
+                                    ? Colors.blue[50]
+                                    : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: isToday
+                                ? Border.all(color: const Color(0xFF0EA5E9))
+                                : null,
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                DateFormat('d').format(date),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: isSelected
+                                      ? Colors.white
+                                      : Colors.black87,
+                                ),
+                              ),
+                              Text(
+                                DateFormat('MMM').format(date),
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: isSelected
+                                      ? Colors.white70
+                                      : Colors.grey[600],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    8,
+                    16,
+                    MediaQuery.of(ctx).viewInsets.bottom + 16,
+                  ),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: selectedDates.isEmpty
+                          ? null
+                          : () {
+                              final sorted = selectedDates.toList()..sort();
+                              setState(() {
+                                specificDates = sorted.map((d) => DateFormat('yyyy-MM-dd').format(d)).toList();
+                                recalcQty();
+                              });
+                              Navigator.pop(ctx);
+                            },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0EA5E9),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        selectedDates.isEmpty
+                            ? 'Select dates'
+                            : 'Confirm ${selectedDates.length} dates',
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 }
