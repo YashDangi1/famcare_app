@@ -13,19 +13,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models/medicine_model.dart';
 import 'screens/alarm_setup_screen.dart';
 import 'family_hub_screen.dart';
-import 'screens/vitals_screen.dart';
 import 'main.dart' show activeAlarmIdNotifier, activeSlotAlarmNotifier, medicineUpdatedNotifier;
 import 'meds_screen.dart';
-import 'vault_screen.dart';
 import 'settings_screen.dart';
-import 'screens/health_dashboard_screen.dart';
 import 'services/activity_service.dart';
 import 'services/notification_service.dart';
 import 'services/slot_preferences_service.dart';
 import 'screens/alarm_screen.dart';
 import 'screens/group_alarm_screen.dart';
-import 'screens/appointment_screen.dart';
 import 'package:alarm/alarm.dart';
+import 'screens/more_screen.dart';
+import 'screens/health_landing_screen.dart';
 
 // ==========================================
 // 1. MAIN APP SHELL (Navigation + Alarm Logic)
@@ -62,9 +60,9 @@ class _MainAppShellState extends State<MainAppShell> {
         onTabChange: (index) => setState(() => _currentIndex = index),
       ),
       const MedsScreen(),
-      const VitalsScreen(),
-      const VaultScreen(),
+      const HealthLandingScreen(),
       const FamilyHubScreen(),
+      const MoreScreen(),
     ];
   }
 
@@ -167,9 +165,9 @@ class _MainAppShellState extends State<MainAppShell> {
             ),
             label: 'Meds',
           ),
-          const BottomNavigationBarItem(icon: Icon(LucideIcons.activity), label: 'Vitals'),
-          const BottomNavigationBarItem(icon: Icon(LucideIcons.folderHeart), label: 'Vault'),
+          const BottomNavigationBarItem(icon: Icon(LucideIcons.heartPulse), label: 'Health'),
           const BottomNavigationBarItem(icon: Icon(LucideIcons.users), label: 'Family'),
+          const BottomNavigationBarItem(icon: Icon(LucideIcons.moreHorizontal), label: 'More'),
         ],
       ),
     );
@@ -201,18 +199,19 @@ class _HomeScreenState extends State<HomeScreen> {
   // New state variables for Quick Stats
   int _totalMedsToday = 0;
   int _takenMedsToday = 0;
-  int _familyCount = 0;
   int _streakDays = 0;
+  int _familyCount = 0;
+  List<Map<String, dynamic>> _missedLogs = [];
+  Map<String, dynamic>? _nextAppointment;
+  
+  // Phase 2 UX state
+  bool _isDueSoonCollapsed = false;
+  bool _isDueSoonHidden = false;
 
   // Next Medication Data
   Map<String, dynamic>? _nextMedData;
   String? _nextMedTimeLabel;
 
-  // Missed Medicines (last 7 days)
-  List<Map<String, dynamic>> _missedLogs = [];
-
-  // Next Appointment
-  Map<String, dynamic>? _nextAppointment;
 
   // FIX 3: Due Soon animated list
   final GlobalKey<AnimatedListState> _dueSoonListKey = GlobalKey<AnimatedListState>();
@@ -1521,10 +1520,14 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           IconButton(
             icon: const Icon(LucideIcons.layoutDashboard, color: Color(0xFF0EA5E9)),
-            tooltip: "Health Dashboard",
+            tooltip: "Health",
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const HealthDashboardScreen()),
+              MaterialPageRoute(
+                builder: (context) => const HealthLandingScreen(
+                  initialSection: HealthLandingSection.dashboard,
+                ),
+              ),
             ),
           ),
           IconButton(
@@ -1560,11 +1563,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     // Due Soon Panel — slot-based, max 4 visible, animated removal
                     Builder(
                       builder: (context) {
+                        if (_isDueSoonHidden) return const SizedBox.shrink();
+                        
                         _cachedDueSoon = _getDueSoonMeds();
                         if (_cachedDueSoon.isEmpty) return const SizedBox.shrink();
-                        final panelHeight = _cachedDueSoon.length > 4
+                        
+                        final panelHeight = _isDueSoonCollapsed ? 0.0 : (_cachedDueSoon.length > 4
                             ? 4.0 * 74.0
-                            : _cachedDueSoon.length * 74.0;
+                            : _cachedDueSoon.length * 74.0);
+                            
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -1579,7 +1586,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 borderRadius: BorderRadius.circular(20),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: const Color(0xFF0EA5E9).withValues(alpha: 0.3),
+                                    color: const Color(0xFF0EA5E9).withOpacity(0.3),
                                     blurRadius: 12,
                                     offset: const Offset(0, 6),
                                   ),
@@ -1600,7 +1607,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                         decoration: BoxDecoration(
-                                          color: Colors.white.withValues(alpha: 0.25),
+                                          color: Colors.white.withOpacity(0.25),
                                           borderRadius: BorderRadius.circular(999),
                                         ),
                                         child: Text(
@@ -1608,24 +1615,41 @@ class _HomeScreenState extends State<HomeScreen> {
                                           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
                                         ),
                                       ),
+                                      const Spacer(),
+                                      InkWell(
+                                        onTap: () => setState(() => _isDueSoonCollapsed = !_isDueSoonCollapsed),
+                                        child: Icon(
+                                          _isDueSoonCollapsed ? LucideIcons.chevronDown : LucideIcons.chevronUp,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      InkWell(
+                                        onTap: () => setState(() => _isDueSoonHidden = true),
+                                        child: const Icon(LucideIcons.x, color: Colors.white, size: 20),
+                                      ),
                                     ],
                                   ),
-                                  const SizedBox(height: 12),
-                                  SizedBox(
-                                    height: panelHeight,
-                                    child: AnimatedList(
-                                      key: _dueSoonListKey,
-                                      padding: EdgeInsets.zero,
-                                      initialItemCount: _cachedDueSoon.length,
-                                      itemBuilder: (context, index, animation) {
-                                        if (index >= _cachedDueSoon.length) return const SizedBox.shrink();
-                                        return SizeTransition(
-                                          sizeFactor: animation,
-                                          child: _buildDueSoonCard(_cachedDueSoon[index]),
-                                        );
-                                      },
+                                  if (!_isDueSoonCollapsed) ...[
+                                    const SizedBox(height: 12),
+                                    AnimatedContainer(
+                                      duration: const Duration(milliseconds: 300),
+                                      height: panelHeight,
+                                      child: AnimatedList(
+                                        key: _dueSoonListKey,
+                                        padding: EdgeInsets.zero,
+                                        initialItemCount: _cachedDueSoon.length,
+                                        itemBuilder: (context, index, animation) {
+                                          if (index >= _cachedDueSoon.length) return const SizedBox.shrink();
+                                          return SizeTransition(
+                                            sizeFactor: animation,
+                                            child: _buildDueSoonCard(_cachedDueSoon[index]),
+                                          );
+                                        },
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ],
                               ),
                             ),
@@ -1756,17 +1780,48 @@ class _HomeScreenState extends State<HomeScreen> {
                     // Quick Actions Section
                     const Text('Quick Actions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF334155))),
                     const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildQuickAction(context, 'Log Vital', LucideIcons.activity, const Color(0xFF0EA5E9), () => widget.onTabChange(2)),
-                        _buildQuickAction(context, 'Add Med', LucideIcons.pill, Colors.orange, () => widget.onTabChange(1)),
-                        _buildQuickAction(context, 'Upload Rx', LucideIcons.filePlus, Colors.purple, () => widget.onTabChange(3)),
-                        _buildQuickAction(context, 'Family', LucideIcons.users, Colors.green, () => widget.onTabChange(4)),
-                        _buildQuickAction(context, 'Book Appt', LucideIcons.calendarPlus, const Color(0xFFF59E0B), () {
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => const AppointmentScreen()));
-                        }),
-                      ],
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildQuickAction(context, 'Log Vital', LucideIcons.activity, const Color(0xFF0EA5E9), () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const HealthLandingScreen(
+                                  initialSection: HealthLandingSection.vitals,
+                                ),
+                              ),
+                            );
+                          }),
+                          const SizedBox(width: 12),
+                          _buildQuickAction(context, 'Add Med', LucideIcons.pill, Colors.orange, () => widget.onTabChange(1)),
+                          const SizedBox(width: 12),
+                          _buildQuickAction(context, 'Upload Rx', LucideIcons.filePlus, Colors.purple, () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const HealthLandingScreen(
+                                  initialSection: HealthLandingSection.records,
+                                ),
+                              ),
+                            );
+                          }),
+                          const SizedBox(width: 12),
+                          _buildQuickAction(context, 'Family', LucideIcons.users, Colors.green, () => widget.onTabChange(3)),
+                          const SizedBox(width: 12),
+                          _buildQuickAction(context, 'Book Appt', LucideIcons.calendarPlus, const Color(0xFFF59E0B), () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const HealthLandingScreen(
+                                  initialSection: HealthLandingSection.appointments,
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -2022,7 +2077,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final dateStr = apptTime != null ? DateFormat('EEE, dd MMM • hh:mm a').format(apptTime) : '';
 
     return GestureDetector(
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AppointmentScreen())),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const HealthLandingScreen(
+            initialSection: HealthLandingSection.appointments,
+          ),
+        ),
+      ),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -2086,7 +2148,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    String mainLabel = 'Vitals Reading';
+    String mainLabel = 'Health Reading';
     String mainValue = '--';
     IconData mainIcon = LucideIcons.activity;
     Color iconColor = const Color(0xFF0EA5E9);

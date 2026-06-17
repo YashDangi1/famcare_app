@@ -48,6 +48,11 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     'custom'
   };
 
+  // Phase 1 UX State
+  bool _isRefillCollapsed = false;
+  final Set<String> _dismissedRefillMeds = {};
+  String _selectedFilter = 'All'; // 'Today', 'All', 'Refills', 'Inactive'
+
   @override
   void initState() {
     super.initState();
@@ -790,12 +795,45 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     );
   }
 
+  void _openHistoryLogs() {
+    final medsState = ref.read(medicationsProvider);
+    medsState.whenData((medications) {
+      final targetMed = medications.cast<Medicine?>().firstWhere(
+            (med) => med?.id == _expandedMedId,
+            orElse: () => medications.isNotEmpty ? medications.first : null,
+          );
+
+      if (targetMed == null || targetMed.id == null) {
+        AppSnackBar.showInfo(
+          context,
+          "No medicine history available yet.",
+        );
+        return;
+      }
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => MedicineLogScreen(
+            medicationId: targetMed.id!,
+            medicineName: targetMed.name,
+          ),
+        ),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text("My Medications"),
         actions: [
+          IconButton(
+            icon: const Icon(LucideIcons.history, color: AppTheme.cyanAccent),
+            tooltip: "History / Logs",
+            onPressed: _openHistoryLogs,
+          ),
           IconButton(
             icon: const Icon(LucideIcons.alarmClock, color: AppTheme.orangeAccent),
             tooltip: "Test Alarm (1 min)",
@@ -860,7 +898,22 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
               color: AppTheme.cyanAccent,
               child: medications.isEmpty
                   ? _buildEmptyState()
-                  : _buildGroupedSlotView(medications),
+                  : CustomScrollView(
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildRefillCenter(medications),
+                              _buildFilterStrip(),
+                            ],
+                          ),
+                        ),
+                        SliverFillRemaining(
+                          child: _buildGroupedSlotView(medications),
+                        ),
+                      ],
+                    ),
             ),
             loading: () => const Center(
                 child: CircularProgressIndicator(color: AppTheme.cyanAccent)),
@@ -922,9 +975,140 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     return groups;
   }
 
+  Widget _buildFilterStrip() {
+    final filters = ['Today', 'All', 'Refills', 'Inactive'];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: filters.map((f) {
+          final isSelected = _selectedFilter == f;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: Text(f),
+              selected: isSelected,
+              onSelected: (val) {
+                if (val) setState(() => _selectedFilter = f);
+              },
+              selectedColor: AppTheme.cyanAccent.withOpacity(0.2),
+              labelStyle: TextStyle(
+                color: isSelected ? AppTheme.cyanAccent : Colors.grey[700],
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildRefillCenter(List<Medicine> medications) {
+    if (_selectedFilter != 'All' && _selectedFilter != 'Refills' && _selectedFilter != 'Today') return const SizedBox.shrink();
+
+    final lowStockMeds = medications.where((med) {
+      if (med.isAsNeeded || !med.isActive) return false;
+      if (_dismissedRefillMeds.contains(med.id)) return false;
+      final threshold = med.refillReminderThreshold ?? (med.frequency * 3);
+      return med.qty <= threshold;
+    }).toList();
+
+    if (lowStockMeds.isEmpty) return const SizedBox.shrink();
+
+    final displayedMeds = _isRefillCollapsed ? lowStockMeds.take(2).toList() : lowStockMeds;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.red[50],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.red[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(LucideIcons.alertTriangle, color: Colors.red, size: 20),
+              const SizedBox(width: 8),
+              const Text("Refill Center", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
+              const Spacer(),
+              if (lowStockMeds.length > 2)
+                InkWell(
+                  onTap: () => setState(() => _isRefillCollapsed = !_isRefillCollapsed),
+                  child: Row(
+                    children: [
+                      Text(
+                        _isRefillCollapsed ? 'View All (${lowStockMeds.length})' : 'Show Less',
+                        style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.w600, fontSize: 13),
+                      ),
+                      Icon(
+                        _isRefillCollapsed ? LucideIcons.chevronDown : LucideIcons.chevronUp,
+                        color: Colors.red[700],
+                        size: 16,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...displayedMeds.map((med) => Dismissible(
+                key: Key('refill_${med.id}'),
+                direction: DismissDirection.endToStart,
+                onDismissed: (dir) {
+                  setState(() => _dismissedRefillMeds.add(med.id!));
+                  AppSnackBar.showInfo(context, "Dismissed refill alert for today");
+                },
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 16),
+                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
+                  child: const Icon(LucideIcons.eyeOff, color: Colors.black54),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(med.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                      Text("${med.qty} left", style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 12),
+                      ElevatedButton(
+                        onPressed: () => _showRefillDialog(med),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: const Text("Refill"),
+                      ),
+                    ],
+                  ),
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+
   Widget _buildGroupedSlotView(List<Medicine> medications) {
-    final activeMeds = medications.where((m) => m.isActive).toList();
-    final inactiveMeds = medications.where((m) => !m.isActive).toList();
+    List<Medicine> activeMeds = medications.where((m) => m.isActive).toList();
+    List<Medicine> inactiveMeds = medications.where((m) => !m.isActive).toList();
+    
+    if (_selectedFilter == 'Today') {
+      // Very basic "Today" filter: only show active meds. (Could be expanded to check specific dates)
+      inactiveMeds = [];
+    } else if (_selectedFilter == 'Inactive') {
+      activeMeds = [];
+    } else if (_selectedFilter == 'Refills') {
+      activeMeds = activeMeds.where((m) => m.qty <= (m.refillReminderThreshold ?? m.frequency * 3)).toList();
+      inactiveMeds = [];
+    }
+
     final groups = _groupMedicinesBySlot(activeMeds);
 
     final slotOrder = ['morning', 'afternoon', 'evening', 'night', 'custom'];

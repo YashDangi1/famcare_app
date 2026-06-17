@@ -160,7 +160,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text("Medical Vault", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text("Medical Records", style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,

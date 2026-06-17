@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/services.dart';
+import 'screens/health_landing_screen.dart';
 import 'screens/activity_feed_screen.dart';
 import 'screens/vitals_screen.dart';
 import 'screens/health_dashboard_screen.dart';
@@ -26,6 +27,7 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
   bool _isLoading = true;
   Map<String, dynamic>? _familyGroup;
   List<dynamic> _members = [];
+  List<Map<String, dynamic>> _activities = [];
   String? _groupId;
   String? _myRole;
   String? _myStatus;
@@ -64,7 +66,18 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
             .select('user_id, role, status, is_inform_contact, profiles(full_name)')
             .eq('group_id', membership['group_id']);
         
-        if (mounted) setState(() => _members = membersData);
+        // 3. Fetch recent activities
+        final activityData = await _supabase
+            .from('activity_feed')
+            .select()
+            .eq('group_id', membership['group_id'])
+            .order('created_at', ascending: false)
+            .limit(3);
+            
+        if (mounted) setState(() {
+          _members = membersData;
+          _activities = List<Map<String, dynamic>>.from(activityData);
+        });
       } else {
         if (mounted) {
           setState(() {
@@ -73,6 +86,7 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
             _myRole = null;
             _myStatus = null;
             _members = [];
+            _activities = [];
           });
         }
       }
@@ -393,51 +407,16 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ),
-              const Divider(),
-              ListTile(
-                leading: const Icon(LucideIcons.layoutDashboard, color: Color(0xFF0EA5E9)),
-                title: const Text('View Dashboard'),
-                subtitle: const Text('Health overview and alerts'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => HealthDashboardScreen(
-                        targetUserId: memberUserId,
-                        targetUserName: memberName,
-                      ),
-                    ),
-                  );
-                },
-              ),
               ListTile(
                 leading: const Icon(LucideIcons.heartPulse, color: Color(0xFF0EA5E9)),
-                title: const Text('View Vitals'),
-                subtitle: const Text('Blood pressure, heart rate, and more'),
+                title: const Text('View Health'),
+                subtitle: const Text('Dashboard, vitals, appointments, and records'),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => VitalsScreen(
-                        targetUserId: memberUserId,
-                        targetUserName: memberName,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(LucideIcons.folderHeart, color: Color(0xFF0EA5E9)),
-                title: const Text('View Vault'),
-                subtitle: const Text('Medical documents and prescriptions'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => VaultScreen(
+                      builder: (context) => HealthLandingScreen(
                         targetUserId: memberUserId,
                         targetUserName: memberName,
                       ),
@@ -585,6 +564,68 @@ Widget _buildPendingView() {
           Text('Family Members', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           ...approved.map((m) => _buildMemberTile(m, isRequest: false)),
+
+          const SizedBox(height: 30),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Family Status', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.green[200]!),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.checkCircle, color: Colors.green[700]),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'All family members have taken their medications today.',
+                    style: TextStyle(color: Colors.green[800], fontSize: 14),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 30),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Recent Activity', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ActivityFeedScreen()),
+                ),
+                child: const Text('View All'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_activities.isEmpty)
+            const Text('No recent activity', style: TextStyle(color: Colors.grey))
+          else
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey[200]!),
+              ),
+              child: Column(
+                children: _activities.map((a) {
+                  final isLast = _activities.last == a;
+                  return _buildActivityTile(a, isLast: isLast);
+                }).toList(),
+              ),
+            ),
+
           const SizedBox(height: 28),
           if (!isMeAdmin)
             SizedBox(
@@ -838,6 +879,64 @@ Widget _buildPendingView() {
           color: textColor,
           fontWeight: FontWeight.bold,
           fontSize: 12,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivityTile(Map<String, dynamic> activity, {bool isLast = false}) {
+    final actionType = activity['action_type']?.toString();
+    final actorName = activity['actor_name']?.toString().trim().isNotEmpty == true
+        ? activity['actor_name'].toString().trim()
+        : 'Family Member';
+    final description = activity['description']?.toString() ?? 'Activity updated';
+    
+    IconData icon;
+    Color color;
+    
+    switch (actionType) {
+      case 'MEDICINE_TAKEN':
+        color = Colors.green;
+        icon = Icons.check_circle;
+        break;
+      case 'MEDICINE_MISSED':
+        color = Colors.red;
+        icon = Icons.cancel;
+        break;
+      case 'ROLE_CHANGED':
+        color = Colors.purple;
+        icon = Icons.admin_panel_settings;
+        break;
+      case 'MEMBER_REMOVED':
+        color = Colors.orange;
+        icon = Icons.person_remove;
+        break;
+      default:
+        color = const Color(0xFF0EA5E9);
+        icon = Icons.info;
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        border: isLast ? null : Border(bottom: BorderSide(color: Colors.grey[200]!)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        title: Text(
+          actorName,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
+        subtitle: Text(
+          description,
+          style: TextStyle(color: Colors.grey[700], fontSize: 12),
         ),
       ),
     );

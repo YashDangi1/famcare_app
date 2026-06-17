@@ -68,7 +68,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
   List<TimeOfDay> customAlarmTimes = [];
   DateTime startDate = DateTime.now();
 
-  // Step 4: Inventory
+  // Step 4: Stock & Refill
   late TextEditingController durationController;
   late TextEditingController qtyController;
   late TextEditingController refillReminderController;
@@ -597,7 +597,27 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
               ),
             ),
           
-          const Divider(height: 48),
+          const Divider(height: 32),
+          
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text("Start Date: ${DateFormat('dd MMM yyyy').format(startDate)}", style: const TextStyle(fontWeight: FontWeight.w500)),
+            trailing: const Icon(LucideIcons.calendar, color: AppTheme.primaryBlue),
+            onTap: () async {
+              final date = await showDatePicker(
+                context: context,
+                initialDate: startDate,
+                firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                lastDate: DateTime.now().add(const Duration(days: 365))
+              );
+              if (date != null) setState(() {
+                startDate = date;
+                recalcQty();
+              });
+            },
+          ),
+          
+          const Divider(height: 32),
           
           const Text("When to take", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
@@ -681,7 +701,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
   }
 
   // ==========================================
-  // STEP 4: Inventory
+  // STEP 4: Stock & Refill
   // ==========================================
   Widget _buildStep4() {
     return SingleChildScrollView(
@@ -691,27 +711,8 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
         children: [
           const Text("Step 4 of 4", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          const Text("Inventory & Notes", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const Text("Stock, Refill & Notes", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 24),
-
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text("Start Date: ${DateFormat('dd MMM yyyy').format(startDate)}", style: const TextStyle(fontWeight: FontWeight.w500)),
-            trailing: const Icon(LucideIcons.calendar, color: AppTheme.primaryBlue),
-            onTap: () async {
-              final date = await showDatePicker(
-                context: context,
-                initialDate: startDate,
-                firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                lastDate: DateTime.now().add(const Duration(days: 365))
-              );
-              if (date != null) setState(() {
-                startDate = date;
-                recalcQty();
-              });
-            },
-          ),
-          const SizedBox(height: 16),
 
           if (scheduleType != 'specific_dates' && !isAsNeeded) ...[
             TextField(

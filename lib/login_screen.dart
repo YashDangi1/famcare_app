@@ -107,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 8),
         Text(
           _isSigningIn 
-              ? 'Sign in to continue tracking your family health vault.'
+              ? 'Sign in to continue tracking your family health records.'
               : 'Join FamCare to securely manage your family\'s health prescriptions and vitals.',
           style: const TextStyle(color: Colors.grey, fontSize: 16),
         ),

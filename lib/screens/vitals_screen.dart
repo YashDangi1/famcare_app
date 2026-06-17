@@ -128,7 +128,15 @@ class _VitalsScreenState extends State<VitalsScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: Text(widget.targetUserName != null ? "${widget.targetUserName}'s Vitals" : "My Vitals", style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+        title: Text(
+          widget.targetUserName != null
+              ? "${widget.targetUserName}'s Health Readings"
+              : "My Health Readings",
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E293B),
+          ),
+        ),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -393,7 +401,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Vitals Reading',
+                      'Health Reading',
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1E293B)),
                     ),
                     Text(

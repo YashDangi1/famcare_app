@@ -7,7 +7,14 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../services/alarm_service.dart';
 
 class AppointmentScreen extends StatefulWidget {
-  const AppointmentScreen({super.key});
+  final String? targetUserId;
+  final String? targetUserName;
+
+  const AppointmentScreen({
+    super.key,
+    this.targetUserId,
+    this.targetUserName,
+  });
 
   @override
   State<AppointmentScreen> createState() => _AppointmentScreenState();
@@ -25,7 +32,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
   }
 
   Future<void> _fetchAppointments() async {
-    final userId = _supabase.auth.currentUser?.id;
+    final userId = widget.targetUserId ?? _supabase.auth.currentUser?.id;
     if (userId == null) return;
 
     setState(() => _isLoading = true);
@@ -82,16 +89,26 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF1F5F9),
       appBar: AppBar(
-        title: const Text('Appointments', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+        title: Text(
+          widget.targetUserName != null
+              ? "${widget.targetUserName}'s Appointments"
+              : 'Appointments',
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1E293B),
+          ),
+        ),
         backgroundColor: Colors.white,
         elevation: 0,
         iconTheme: const IconThemeData(color: Color(0xFF334155)),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddSheet,
-        backgroundColor: const Color(0xFF0EA5E9),
-        child: const Icon(LucideIcons.plus, color: Colors.white),
-      ),
+      floatingActionButton: widget.targetUserId != null
+          ? null
+          : FloatingActionButton(
+              onPressed: _showAddSheet,
+              backgroundColor: const Color(0xFF0EA5E9),
+              child: const Icon(LucideIcons.plus, color: Colors.white),
+            ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _appointments.isEmpty
@@ -116,6 +133,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
   }
 
   Widget _buildAppointmentCard(Map<String, dynamic> appt) {
+    final isViewingOther = widget.targetUserId != null;
     final doctorName = appt['doctor_name'] ?? 'Doctor';
     final apptTime = DateTime.tryParse(appt['appointment_date']?.toString() ?? '')?.toLocal();
     final notes = appt['notes']?.toString() ?? '';
@@ -123,6 +141,63 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
 
     final dateStr = apptTime != null ? DateFormat('EEE, dd MMM yyyy').format(apptTime) : '';
     final timeStr = apptTime != null ? DateFormat('hh:mm a').format(apptTime) : '';
+
+    final card = Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0EA5E9).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(LucideIcons.stethoscope, color: Color(0xFF0EA5E9), size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(doctorName,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1E293B))),
+                const SizedBox(height: 4),
+                Text('$dateStr  •  $timeStr',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                if (notes.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(notes,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                ],
+              ],
+            ),
+          ),
+          Column(
+            children: [
+              if (reminderEnabled)
+                Icon(LucideIcons.bell, color: Colors.amber[600], size: 16),
+              const SizedBox(height: 4),
+              Icon(LucideIcons.chevronRight, color: Colors.grey[300], size: 18),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    if (isViewingOther) {
+      return card;
+    }
 
     return Dismissible(
       key: Key(appt['id']),
@@ -137,58 +212,7 @@ class _AppointmentScreenState extends State<AppointmentScreen> {
         await _deleteAppointment(appt['id']);
         return false;
       },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0xFF0EA5E9).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(LucideIcons.stethoscope, color: Color(0xFF0EA5E9), size: 24),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(doctorName,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF1E293B))),
-                  const SizedBox(height: 4),
-                  Text('$dateStr  •  $timeStr',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-                  if (notes.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(notes,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[400])),
-                  ],
-                ],
-              ),
-            ),
-            Column(
-              children: [
-                if (reminderEnabled)
-                  Icon(LucideIcons.bell, color: Colors.amber[600], size: 16),
-                const SizedBox(height: 4),
-                Icon(LucideIcons.chevronRight, color: Colors.grey[300], size: 18),
-              ],
-            ),
-          ],
-        ),
-      ),
+      child: card,
     );
   }
 }

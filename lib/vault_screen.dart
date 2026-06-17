@@ -20,6 +20,9 @@ class _VaultScreenState extends State<VaultScreen> {
   final _supabase = Supabase.instance.client;
   bool _isLoading = true;
   List<dynamic> _prescriptions = [];
+  
+  String _selectedCategory = 'All'; // 'All', 'Prescriptions', 'Reports'
+  bool _sortDescending = true;
 
   @override
   void initState() {
@@ -172,10 +175,10 @@ class _VaultScreenState extends State<VaultScreen> {
         'image_url': imageUrl,
       });
 
-      // Log activity for new vault document
+      // Log activity for the new records upload
       try {
         await ActivityService.log(
-          actionType: 'VITALS_ADDED', // Vault is considered part of vitals/health records here
+          actionType: 'VITALS_ADDED', // Records are grouped under the health area
           description: 'Uploaded a new document: $title',
         );
       } catch (e) {
@@ -183,7 +186,7 @@ class _VaultScreenState extends State<VaultScreen> {
       }
 
       if (mounted) {
-        AppSnackBar.showSuccess(context, 'Document saved to vault!');
+        AppSnackBar.showSuccess(context, 'Document saved to records!');
         _fetchPrescriptions();
       }
     } catch (e) {
@@ -228,40 +231,44 @@ class _VaultScreenState extends State<VaultScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(widget.targetUserName != null ? "${widget.targetUserName}'s Vault" : "My Vault", style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(widget.targetUserName != null ? "${widget.targetUserName}'s Records" : "My Records", style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _prescriptions.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(LucideIcons.folderHeart, size: 80, color: Colors.grey[300]),
-                      const SizedBox(height: 16),
-                      Text(isViewingOther ? 'No documents found' : 'Your vault is empty',
-                        style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w500)),
-                      const SizedBox(height: 8),
-                      Text(isViewingOther ? 'This user has no uploaded documents yet' : 'Securely store your medical reports here',
-                        style: TextStyle(fontSize: 14, color: Colors.grey[400])),
-                    ],
-                  ),
-                )
-              : GridView.builder(
-                  padding: const EdgeInsets.all(16),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    childAspectRatio: 0.8,
-                  ),
-                  itemCount: _prescriptions.length,
-                  itemBuilder: (context, index) {
-                    final doc = _prescriptions[index];
-                    return GestureDetector(
+      body: Column(
+        children: [
+          _buildFilterAndSortRow(),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredPrescriptions().isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(LucideIcons.folderHeart, size: 80, color: Colors.grey[300]),
+                            const SizedBox(height: 16),
+                            Text(isViewingOther ? 'No documents found' : 'Your records are empty',
+                              style: TextStyle(fontSize: 18, color: Colors.grey[600], fontWeight: FontWeight.w500)),
+                            const SizedBox(height: 8),
+                            Text(isViewingOther ? 'This user has no uploaded documents yet' : 'Securely store your medical reports here',
+                              style: TextStyle(fontSize: 14, color: Colors.grey[400])),
+                          ],
+                        ),
+                      )
+                    : GridView.builder(
+                        padding: const EdgeInsets.all(16),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
+                          childAspectRatio: 0.8,
+                        ),
+                        itemCount: _filteredPrescriptions().length,
+                        itemBuilder: (context, index) {
+                          final doc = _filteredPrescriptions()[index];
+                          return GestureDetector(
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -313,11 +320,77 @@ class _VaultScreenState extends State<VaultScreen> {
                     );
                   },
                 ),
+          ),
+        ],
+      ),
       floatingActionButton: isViewingOther ? null : FloatingActionButton(
         heroTag: 'vault_fab',
         onPressed: _uploadPrescription,
         backgroundColor: const Color(0xFF0EA5E9),
         child: const Icon(LucideIcons.plus, color: Colors.white),
+      ),
+    );
+  }
+
+  List<dynamic> _filteredPrescriptions() {
+    List<dynamic> filtered = List.from(_prescriptions);
+    
+    // In a real app with a 'category' column, you would filter here:
+    // if (_selectedCategory != 'All') {
+    //   filtered = filtered.where((p) => p['category'] == _selectedCategory).toList();
+    // }
+    
+    filtered.sort((a, b) {
+      final dateA = DateTime.tryParse(a['created_at'].toString()) ?? DateTime.now();
+      final dateB = DateTime.tryParse(b['created_at'].toString()) ?? DateTime.now();
+      return _sortDescending ? dateB.compareTo(dateA) : dateA.compareTo(dateB);
+    });
+    
+    return filtered;
+  }
+
+  Widget _buildFilterAndSortRow() {
+    final categories = ['All', 'Prescriptions', 'Reports'];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: categories.map((c) {
+                  final isSelected = _selectedCategory == c;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: ChoiceChip(
+                      label: Text(c),
+                      selected: isSelected,
+                      onSelected: (val) {
+                        if (val) setState(() => _selectedCategory = c);
+                      },
+                      selectedColor: const Color(0xFF0EA5E9).withOpacity(0.2),
+                      labelStyle: TextStyle(
+                        color: isSelected ? const Color(0xFF0EA5E9) : Colors.grey[700],
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(
+              _sortDescending ? LucideIcons.sortDesc : LucideIcons.sortAsc,
+              color: Colors.grey[600],
+            ),
+            onPressed: () {
+              setState(() => _sortDescending = !_sortDescending);
+            },
+            tooltip: 'Sort by Date',
+          ),
+        ],
       ),
     );
   }
