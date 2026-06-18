@@ -57,6 +57,11 @@ class AlarmService {
     }
   }
 
+  Future<bool> _shouldUseFullScreenIntent() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('alarm_style_fullscreen') ?? true;
+  }
+
   /// Schedules a real device alarm that rings even when app is closed.
   /// Returns true if alarm was successfully set, false otherwise.
   Future<bool> scheduleAlarm({
@@ -67,6 +72,7 @@ class AlarmService {
     required DateTime time,
     int qty = 0,
   }) async {
+    final useFullScreenIntent = await _shouldUseFullScreenIntent();
     final alarmSettings = AlarmSettings(
       id: id,
       dateTime: time,
@@ -84,7 +90,7 @@ class AlarmService {
         stopButton: null,  // Removes Dismiss button completely
       ),
       warningNotificationOnKill: true,
-      androidFullScreenIntent: true,
+      androidFullScreenIntent: useFullScreenIntent,
     );
 
     final success = await Alarm.set(alarmSettings: alarmSettings);
@@ -142,6 +148,7 @@ class AlarmService {
     required DateTime originalTime,
     int snoozeDurationMinutes = 30,
   }) async {
+    final useFullScreenIntent = await _shouldUseFullScreenIntent();
     final fromOriginal = originalTime.add(Duration(minutes: snoozeDurationMinutes));
     final fromNow = DateTime.now().add(const Duration(minutes: 5));
     final snoozeTime =
@@ -167,7 +174,7 @@ class AlarmService {
           stopButton: null,  // Removes Dismiss button completely
         ),
         warningNotificationOnKill: true,
-        androidFullScreenIntent: true,
+        androidFullScreenIntent: useFullScreenIntent,
       ),
     );
 
@@ -198,6 +205,7 @@ class AlarmService {
     required List<String> medicineNames,
     required String medicationIdsJson,
   }) async {
+    final useFullScreenIntent = await _shouldUseFullScreenIntent();
     final alarmId = generateSlotAlarmId(slotKey);
 
     final title = _slotDisplayName(slotKey.split('_')[0]);
@@ -224,7 +232,7 @@ class AlarmService {
           stopButton: null,
         ),
         warningNotificationOnKill: true,
-        androidFullScreenIntent: true,
+        androidFullScreenIntent: useFullScreenIntent,
       ),
     );
 
@@ -253,6 +261,7 @@ class AlarmService {
     required List<String> remainingMedicineNames,
     required String remainingMedicationIdsJson,
   }) async {
+    final useFullScreenIntent = await _shouldUseFullScreenIntent();
     final alarmId = generateSlotAlarmId(slotKey, isRetry: true);
 
     final title = '${_slotDisplayName(slotKey.split('_')[0])} - Reminder';
@@ -278,7 +287,7 @@ class AlarmService {
           stopButton: null,
         ),
         warningNotificationOnKill: true,
-        androidFullScreenIntent: true,
+        androidFullScreenIntent: useFullScreenIntent,
       ),
     );
 
@@ -372,8 +381,8 @@ class AlarmService {
           cancelNotification: true,
         ),
         AndroidNotificationAction(
-          'take_later_$alarmId',
-          'Take Later',
+          'snooze_$alarmId',
+          'Snooze 30 Min',
           cancelNotification: true,
         ),
       ],

@@ -17,6 +17,20 @@ class MainActivity : FlutterActivity() {
     private var alarmChannel: MethodChannel? = null
     private var pendingAlarmId: Int? = null
 
+    private fun isFullScreenAlarmModeEnabled(): Boolean {
+        return try {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            prefs.getBoolean("flutter.alarm_style_fullscreen", true)
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    private fun shouldWakeForAlarm(intent: Intent?): Boolean {
+        val alarmId = intent?.getIntExtra("alarm_id", -1) ?: -1
+        return alarmId != -1 && isFullScreenAlarmModeEnabled()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -25,20 +39,26 @@ class MainActivity : FlutterActivity() {
             prefs.edit().putBoolean("flutter.needs_reschedule", true).apply()
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            )
+        if (shouldWakeForAlarm(intent)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            } else {
+                window.addFlags(
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_ALLOW_LOCK_WHILE_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
         }
 
         // Check intent for alarm_id (from AlarmService.startActivity)
         extractAlarmIdFromIntent(intent)
+
+        if (pendingAlarmId != null && !isFullScreenAlarmModeEnabled()) {
+            moveTaskToBack(true)
+        }
     }
 
     private fun extractAlarmIdFromIntent(intent: Intent?) {

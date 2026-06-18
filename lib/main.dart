@@ -29,6 +29,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // Snooze offset: real alarm IDs are small; snoozes get originalId + kSnoozeOffset.
 // Any alarm with id > kSnoozeOffset is a snooze.
 const int kSnoozeOffset = 900000;
+const int kAutoStopNotificationOffset = 20000;
 
 // Guard against double-calling (early listener + AlarmService listener both fire)
 final Set<int> _handledAlarmIds = {};
@@ -175,7 +176,7 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
         // This survives app kill; a Dart Timer would not.
         final tzExpiry = tz.TZDateTime.from(expiryTime, tz.local);
         await AlarmService().notificationsPlugin.zonedSchedule(
-          autoStopId + 20000, // unique notification ID offset from alarm ID
+          autoStopId + kAutoStopNotificationOffset,
           'Missed Dose',
           '$medicineName was not taken',
           tzExpiry,
@@ -188,6 +189,7 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
               priority: Priority.high,
             ),
           ),
+          payload: 'auto_stop:$autoStopId',
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
           uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
         );
@@ -323,7 +325,13 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
 @pragma('vm:entry-point')
 void _onNotificationResponse(NotificationResponse response) async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
+  try {
+    await Alarm.init();
+  } catch (e) {
+    debugPrint("Background Alarm.init failed: $e");
+  }
+
   if (!_supabaseReady) {
     try {
       await dotenv.load(fileName: '.env');
@@ -362,8 +370,13 @@ void _onNotificationResponse(NotificationResponse response) async {
   } else if (actionId.startsWith('took_it_')) {
     final alarmId = int.tryParse(actionId.replaceFirst('took_it_', ''));
     if (alarmId != null) await _handleNotificationTookIt(alarmId);
-  } else if (actionId.startsWith('take_later_')) {
-    final alarmId = int.tryParse(actionId.replaceFirst('take_later_', ''));
+  } else if (actionId.startsWith('snooze_') ||
+      actionId.startsWith('take_later_')) {
+    final alarmId = int.tryParse(
+      actionId.startsWith('snooze_')
+          ? actionId.replaceFirst('snooze_', '')
+          : actionId.replaceFirst('take_later_', ''),
+    );
     if (alarmId != null) await _handleNotificationTakeLater(alarmId);
   } else if (payload.startsWith('auto_stop:')) {
     // Auto-stop notification fired: stop the ringing alarm + log missed dose.
@@ -371,9 +384,11 @@ void _onNotificationResponse(NotificationResponse response) async {
     if (targetId != null) {
       try {
         await Alarm.stop(targetId);
+        await _cancelNotificationArtifacts(targetId);
         await _logAsMissed(targetId);
         final cleanPrefs = await SharedPreferences.getInstance();
         await cleanPrefs.remove('auto_stop_expiry_$targetId');
+        await cleanPrefs.remove('auto_stop_medname_$targetId');
       } catch (e) {
         debugPrint("Auto-stop callback error: $e");
       }
@@ -390,7 +405,7 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
 
   try {
     await Alarm.stop(alarmId);
-    await AlarmService().notificationsPlugin.cancel(alarmId); // Cancel native notification
+    await _cancelNotificationArtifacts(alarmId);
 
     // Check if it's a group alarm
     final prefs = await SharedPreferences.getInstance();
@@ -447,6 +462,8 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
       try {
         await prefs.remove('group_alarm_$alarmId');
         await prefs.remove('alarm_scheduled_time_$alarmId');
+        await prefs.remove('auto_stop_expiry_$alarmId');
+        await prefs.remove('auto_stop_medname_$alarmId');
       } catch (_) {}
       return;
     }
@@ -522,6 +539,7 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
       await prefs.remove('cached_med_$alarmId');
       await prefs.remove('alarm_scheduled_time_$alarmId');
       await prefs.remove('auto_stop_expiry_$alarmId');
+      await prefs.remove('auto_stop_medname_$alarmId');
       _handledNotificationActionIds.remove(alarmId);
     } catch (_) {}
 
@@ -539,7 +557,7 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
 
   try {
     await Alarm.stop(alarmId);
-    await AlarmService().notificationsPlugin.cancel(alarmId); // Cancel native notification
+    await _cancelNotificationArtifacts(alarmId);
 
     // Check if it's a group alarm
     final prefs = await SharedPreferences.getInstance();
@@ -582,6 +600,8 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
       try {
         await prefs.remove('group_alarm_$alarmId');
         await prefs.remove('alarm_scheduled_time_$alarmId');
+        await prefs.remove('auto_stop_expiry_$alarmId');
+        await prefs.remove('auto_stop_medname_$alarmId');
       } catch (_) {}
       return;
     }
@@ -659,6 +679,7 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
       await prefs.remove('cached_med_$alarmId');
       await prefs.remove('alarm_scheduled_time_$alarmId');
       await prefs.remove('auto_stop_expiry_$alarmId');
+      await prefs.remove('auto_stop_medname_$alarmId');
       _handledNotificationActionIds.remove(alarmId);
     } catch (_) {}
 
@@ -671,6 +692,7 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
 /// Check for alarms that expired while app was killed (CRITICAL 3 fix)
 Future<void> _checkExpiredAutoStopAlarms() async {
   try {
+    await Alarm.init();
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs.getKeys().where((k) => k.startsWith('auto_stop_expiry_')).toList();
 
@@ -687,10 +709,13 @@ Future<void> _checkExpiredAutoStopAlarms() async {
         // Timer expired while app was killed — check if still unhandled
         if (!_handledNotificationActionIds.contains(alarmId)) {
           debugPrint("Startup: expired auto-stop alarm $alarmId — logging as missed");
+          await Alarm.stop(alarmId);
+          await _cancelNotificationArtifacts(alarmId);
           await _logAsMissed(alarmId);
           _handledNotificationActionIds.add(alarmId);
         }
         await prefs.remove(key);
+        await prefs.remove('auto_stop_medname_$alarmId');
       }
     }
   } catch (e) {
@@ -733,6 +758,8 @@ Future<void> _logAsMissed(int alarmId) async {
     // Clean up
     await prefs.remove('cached_med_$alarmId');
     await prefs.remove('alarm_scheduled_time_$alarmId');
+    await prefs.remove('auto_stop_expiry_$alarmId');
+    await prefs.remove('auto_stop_medname_$alarmId');
 
     debugPrint("Auto-stop: logged as missed for alarm $alarmId");
   } catch (e) {
@@ -746,6 +773,13 @@ bool _supabaseReady = false;
 
 // MethodChannel for native alarm events (killed-state relaunch)
 const _alarmChannel = MethodChannel('com.famcare/alarm');
+
+Future<void> _cancelNotificationArtifacts(int alarmId) async {
+  await AlarmService().notificationsPlugin.cancel(alarmId);
+  await AlarmService().notificationsPlugin.cancel(
+    alarmId + kAutoStopNotificationOffset,
+  );
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
