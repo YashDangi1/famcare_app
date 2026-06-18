@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -169,10 +168,10 @@ class AlarmService {
           volumeEnforced: true,
           fadeDuration: Duration(seconds: 3),
         ),
-        notificationSettings: NotificationSettings(
-          title: '$medicineName (Snooze)',
-          body: 'Time for your medication',
-          stopButton: null,  // Removes Dismiss button completely
+        notificationSettings: const NotificationSettings(
+          title: '',
+          body: '',
+          stopButton: null,
         ),
         warningNotificationOnKill: true,
         androidFullScreenIntent: useFullScreenIntent,
@@ -227,9 +226,9 @@ class AlarmService {
           volumeEnforced: true,
           fadeDuration: const Duration(seconds: 3),
         ),
-        notificationSettings: NotificationSettings(
-          title: title,
-          body: body,
+        notificationSettings: const NotificationSettings(
+          title: '',
+          body: '',
           stopButton: null,
         ),
         warningNotificationOnKill: true,
@@ -249,20 +248,6 @@ class AlarmService {
       'is_retry': false,
     }));
     await prefs.setInt('active_group_alarm_$slotKey', alarmId);
-    // #region debug-point K:group-alarm-scheduled
-    await _debugReportActionNotification(
-      'K',
-      'alarm_service.dart:scheduleGroupSlotAlarm',
-      'Group slot alarm scheduled',
-      data: {
-        'alarmId': alarmId,
-        'slot': slot,
-        'slotKey': slotKey,
-        'alarmTime': alarmTime.toIso8601String(),
-        'useFullScreenIntent': useFullScreenIntent,
-      },
-    );
-    // #endregion
 
     debugPrint('Group alarm set: ID=$alarmId slot=$slotKey at $alarmTime');
     return alarmId;
@@ -296,9 +281,9 @@ class AlarmService {
           volumeEnforced: true,
           fadeDuration: const Duration(seconds: 3),
         ),
-        notificationSettings: NotificationSettings(
-          title: title,
-          body: body,
+        notificationSettings: const NotificationSettings(
+          title: '',
+          body: '',
           stopButton: null,
         ),
         warningNotificationOnKill: true,
@@ -377,19 +362,6 @@ class AlarmService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('alarm_scheduled_time_$alarmId', scheduledTime.toIso8601String());
     } catch (_) {}
-    // #region debug-point L:show-action-notification
-    await _debugReportActionNotification(
-      'L',
-      'alarm_service.dart:showActionNotification',
-      'Showing action notification',
-      data: {
-        'alarmId': alarmId,
-        'medicineName': medicineName,
-        'dosage': dosage,
-        'scheduledTime': scheduledTime.toIso8601String(),
-      },
-    );
-    // #endregion
     final androidDetails = AndroidNotificationDetails(
       'alarm_actions_channel',
       'Alarm Actions',
@@ -428,59 +400,6 @@ class AlarmService {
       details,
       payload: 'alarm_action_$alarmId',
     );
-    // #region debug-point M:show-action-notification-complete
-    await _debugReportActionNotification(
-      'M',
-      'alarm_service.dart:showActionNotification',
-      'Action notification posted',
-      data: {
-        'alarmId': alarmId,
-        'payload': 'alarm_action_$alarmId',
-        'actionsCount': 2,
-      },
-    );
-    // #endregion
-  }
-
-  Future<void> _debugReportActionNotification(
-    String hypothesisId,
-    String location,
-    String msg, {
-    Map<String, dynamic>? data,
-  }) async {
-    try {
-      var url = 'http://127.0.0.1:7777/event';
-      var sessionId = 'custom-alarm-actions';
-      final envFile = File('.dbg/custom-alarm-actions.env');
-      if (await envFile.exists()) {
-        final lines = await envFile.readAsLines();
-        for (final line in lines) {
-          if (line.startsWith('DEBUG_SERVER_URL=')) {
-            url = line.substring('DEBUG_SERVER_URL='.length).trim();
-          } else if (line.startsWith('DEBUG_SESSION_ID=')) {
-            sessionId = line.substring('DEBUG_SESSION_ID='.length).trim();
-          }
-        }
-      }
-
-      final client = HttpClient();
-      try {
-        final request = await client.postUrl(Uri.parse(url));
-        request.headers.contentType = ContentType.json;
-        request.write(jsonEncode({
-          'sessionId': sessionId,
-          'runId': 'pre-fix-custom',
-          'hypothesisId': hypothesisId,
-          'location': location,
-          'msg': '[DEBUG] $msg',
-          'data': data ?? <String, dynamic>{},
-          'ts': DateTime.now().millisecondsSinceEpoch,
-        }));
-        await request.close().timeout(const Duration(seconds: 2));
-      } finally {
-        client.close(force: true);
-      }
-    } catch (_) {}
   }
 
   /// Cleans up shared preferences for alarms that no longer exist

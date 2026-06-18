@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:alarm/alarm.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -156,20 +155,6 @@ Future<void> handleAlarmRing(AlarmSettings settings) async {
 
     if (!isFullScreen) {
       debugPrint("Alarm style: Notification only — replacing with action notification");
-      // #region debug-point F:normal-notification-only-replacement
-      await _debugReportNotificationAction(
-        'F',
-        'main.dart:handleAlarmRing',
-        'Notification-only branch for normal alarm',
-        data: {
-          'alarmId': settings.id,
-          'originalId': originalId,
-          'medicineName': med['name'] ?? 'Medicine',
-          'scheduledTime': settings.dateTime.toIso8601String(),
-        },
-      );
-      // #endregion
-
       // Stop the original alarm immediately (we'll use our notification with actions instead)
       await Alarm.stop(settings.id);
 
@@ -286,18 +271,6 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
   final isFullScreen = prefs.getBool('alarm_style_fullscreen') ?? true;
   
   if (!isFullScreen) {
-      // #region debug-point G:group-notification-only-replacement
-      await _debugReportNotificationAction(
-        'G',
-        'main.dart:_handleGroupAlarmIfNeeded',
-        'Notification-only branch for group alarm',
-        data: {
-          'alarmId': alarmId,
-          'slotKey': slotKey,
-          'medicineCount': medicineNames?.length ?? 0,
-        },
-      );
-      // #endregion
       debugPrint("Alarm style: Notification only — replacing group alarm with action notification");
       
       // Stop the original alarm immediately (we'll use our notification with actions instead)
@@ -357,31 +330,10 @@ Future<bool> _handleGroupAlarmIfNeeded(int alarmId) async {
 @pragma('vm:entry-point')
 void _onNotificationResponse(NotificationResponse response) async {
   WidgetsFlutterBinding.ensureInitialized();
-  // #region debug-point A:notification-response
-  await _debugReportNotificationAction(
-    'A',
-    'main.dart:_onNotificationResponse',
-    'Notification response received',
-    data: {
-      'actionId': response.actionId,
-      'payload': response.payload,
-      'input': response.input,
-      'responseType': response.notificationResponseType.name,
-    },
-  );
-  // #endregion
 
   try {
     await Alarm.init();
   } catch (e) {
-    // #region debug-point B:alarm-init-failed
-    await _debugReportNotificationAction(
-      'B',
-      'main.dart:_onNotificationResponse',
-      'Alarm.init failed in notification callback',
-      data: {'error': e.toString()},
-    );
-    // #endregion
     debugPrint("Background Alarm.init failed: $e");
   }
 
@@ -409,17 +361,6 @@ void _onNotificationResponse(NotificationResponse response) async {
       // Check if it's a group alarm
       final prefs = await SharedPreferences.getInstance();
       final groupData = prefs.getString('group_alarm_$alarmId');
-      // #region debug-point H:notification-body-tap
-      await _debugReportNotificationAction(
-        'H',
-        'main.dart:_onNotificationResponse',
-        'Notification body tap branch',
-        data: {
-          'alarmId': alarmId,
-          'isGroupAlarm': groupData != null,
-        },
-      );
-      // #endregion
       if (groupData != null) {
         final decoded = jsonDecode(groupData) as Map<String, dynamic>;
         final slotKey = decoded['slot_key'] as String?;
@@ -433,14 +374,6 @@ void _onNotificationResponse(NotificationResponse response) async {
     }
   } else if (actionId.startsWith('took_it_')) {
     final alarmId = int.tryParse(actionId.replaceFirst('took_it_', ''));
-    // #region debug-point I:took-it-branch
-    await _debugReportNotificationAction(
-      'I',
-      'main.dart:_onNotificationResponse',
-      'Took-it action branch',
-      data: {'alarmId': alarmId},
-    );
-    // #endregion
     if (alarmId != null) await _handleNotificationTookIt(alarmId);
   } else if (actionId.startsWith('snooze_') ||
       actionId.startsWith('take_later_')) {
@@ -449,14 +382,6 @@ void _onNotificationResponse(NotificationResponse response) async {
           ? actionId.replaceFirst('snooze_', '')
           : actionId.replaceFirst('take_later_', ''),
     );
-    // #region debug-point J:snooze-branch
-    await _debugReportNotificationAction(
-      'J',
-      'main.dart:_onNotificationResponse',
-      'Snooze action branch',
-      data: {'alarmId': alarmId, 'actionId': actionId},
-    );
-    // #endregion
     if (alarmId != null) await _handleNotificationTakeLater(alarmId);
   } else if (payload.startsWith('auto_stop:')) {
     // Auto-stop notification fired: stop the ringing alarm + log missed dose.
@@ -505,23 +430,7 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
   Future.delayed(const Duration(minutes: 1), () => _handledNotificationActionIds.remove(alarmId));
 
   try {
-    // #region debug-point B:took-it-before-stop
-    await _debugReportNotificationAction(
-      'B',
-      'main.dart:_handleNotificationTookIt',
-      'Starting took-it handler',
-      data: {'alarmId': alarmId},
-    );
-    // #endregion
     await _stopAlarmFamily(alarmId);
-    // #region debug-point C:took-it-after-stop
-    await _debugReportNotificationAction(
-      'C',
-      'main.dart:_handleNotificationTookIt',
-      'Alarm.stop finished for took-it handler',
-      data: {'alarmId': alarmId},
-    );
-    // #endregion
     await _cancelNotificationArtifacts(alarmId);
 
     // Check if it's a group alarm
@@ -583,14 +492,6 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
         await prefs.remove('auto_stop_medname_$alarmId');
       } catch (_) {}
       medicineUpdatedNotifier.value++;
-      // #region debug-point D:took-it-group-complete
-      await _debugReportNotificationAction(
-        'D',
-        'main.dart:_handleNotificationTookIt',
-        'Group took-it handler completed',
-        data: {'alarmId': alarmId, 'groupAlarm': true},
-      );
-      // #endregion
       return;
     }
 
@@ -669,25 +570,8 @@ Future<void> _handleNotificationTookIt(int alarmId) async {
       _handledNotificationActionIds.remove(alarmId);
     } catch (_) {}
     medicineUpdatedNotifier.value++;
-    // #region debug-point D:took-it-complete
-    await _debugReportNotificationAction(
-      'D',
-      'main.dart:_handleNotificationTookIt',
-      'Took-it handler completed',
-      data: {'alarmId': alarmId, 'groupAlarm': false, 'medId': medId},
-    );
-    // #endregion
-
     debugPrint("Notification 'I Took It' handled for alarm $alarmId");
   } catch (e) {
-    // #region debug-point E:took-it-error
-    await _debugReportNotificationAction(
-      'E',
-      'main.dart:_handleNotificationTookIt',
-      'Took-it handler failed',
-      data: {'alarmId': alarmId, 'error': e.toString()},
-    );
-    // #endregion
     debugPrint("Error handling notification took_it: $e");
   }
 }
@@ -699,23 +583,7 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
   Future.delayed(const Duration(minutes: 1), () => _handledNotificationActionIds.remove(alarmId));
 
   try {
-    // #region debug-point B:snooze-before-stop
-    await _debugReportNotificationAction(
-      'B',
-      'main.dart:_handleNotificationTakeLater',
-      'Starting snooze handler',
-      data: {'alarmId': alarmId},
-    );
-    // #endregion
     await _stopAlarmFamily(alarmId);
-    // #region debug-point C:snooze-after-stop
-    await _debugReportNotificationAction(
-      'C',
-      'main.dart:_handleNotificationTakeLater',
-      'Alarm.stop finished for snooze handler',
-      data: {'alarmId': alarmId},
-    );
-    // #endregion
     await _cancelNotificationArtifacts(alarmId);
 
     // Check if it's a group alarm
@@ -763,14 +631,6 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
         await prefs.remove('auto_stop_medname_$alarmId');
       } catch (_) {}
       medicineUpdatedNotifier.value++;
-      // #region debug-point D:snooze-group-complete
-      await _debugReportNotificationAction(
-        'D',
-        'main.dart:_handleNotificationTakeLater',
-        'Group snooze handler completed',
-        data: {'alarmId': alarmId, 'groupAlarm': true},
-      );
-      // #endregion
       return;
     }
 
@@ -851,25 +711,8 @@ Future<void> _handleNotificationTakeLater(int alarmId) async {
       _handledNotificationActionIds.remove(alarmId);
     } catch (_) {}
     medicineUpdatedNotifier.value++;
-    // #region debug-point D:snooze-complete
-    await _debugReportNotificationAction(
-      'D',
-      'main.dart:_handleNotificationTakeLater',
-      'Snooze handler completed',
-      data: {'alarmId': alarmId, 'groupAlarm': false, 'medId': medId},
-    );
-    // #endregion
-
     debugPrint("Notification 'Take Later' handled for alarm $alarmId");
   } catch (e) {
-    // #region debug-point E:snooze-error
-    await _debugReportNotificationAction(
-      'E',
-      'main.dart:_handleNotificationTakeLater',
-      'Snooze handler failed',
-      data: {'alarmId': alarmId, 'error': e.toString()},
-    );
-    // #endregion
     debugPrint("Error handling notification take_later: $e");
   }
 }
@@ -959,58 +802,6 @@ bool _supabaseReady = false;
 // MethodChannel for native alarm events (killed-state relaunch)
 const _alarmChannel = MethodChannel('com.famcare/alarm');
 
-// #region debug-point A-E:notification-action-alarm
-Future<void> _debugReportNotificationAction(
-  String hypothesisId,
-  String location,
-  String msg, {
-  Map<String, dynamic>? data,
-}) async {
-  try {
-    var url = 'http://127.0.0.1:7777/event';
-    var sessionId = 'custom-alarm-actions';
-    try {
-      final envCandidates = <String>[
-        '.dbg/custom-alarm-actions.env',
-        '.dbg/notification-action-alarm.env',
-      ];
-      for (final envPath in envCandidates) {
-        final envFile = File(envPath);
-        if (await envFile.exists()) {
-          final lines = await envFile.readAsLines();
-          for (final line in lines) {
-            if (line.startsWith('DEBUG_SERVER_URL=')) {
-              url = line.substring('DEBUG_SERVER_URL='.length).trim();
-            } else if (line.startsWith('DEBUG_SESSION_ID=')) {
-              sessionId = line.substring('DEBUG_SESSION_ID='.length).trim();
-            }
-          }
-          break;
-        }
-      }
-    } catch (_) {}
-
-    final client = HttpClient();
-    try {
-      final request = await client.postUrl(Uri.parse(url));
-      request.headers.contentType = ContentType.json;
-      request.write(jsonEncode({
-        'sessionId': sessionId,
-        'runId': 'pre-fix-custom',
-        'hypothesisId': hypothesisId,
-        'location': location,
-        'msg': '[DEBUG] $msg',
-        'data': data ?? <String, dynamic>{},
-        'ts': DateTime.now().millisecondsSinceEpoch,
-      }));
-      await request.close().timeout(const Duration(seconds: 2));
-    } finally {
-      client.close(force: true);
-    }
-  } catch (_) {}
-}
-// #endregion
-
 Future<void> _cancelNotificationArtifacts(int alarmId) async {
   final isSnooze = alarmId > kSnoozeOffset;
   final originalId = isSnooze ? alarmId - kSnoozeOffset : alarmId;
@@ -1028,11 +819,11 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   tz_data.initializeTimeZones();
 
-  // STEP 0: Initialize notifications immediately so action callbacks (like "I Took It") fire reliably
+  // STEP 0: Initialize notifications FIRST so action callbacks are ready before alarms ring.
   try {
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidSettings);
-    await FlutterLocalNotificationsPlugin().initialize(
+    await AlarmService().notificationsPlugin.initialize(
       initSettings,
       onDidReceiveNotificationResponse: _onNotificationResponse,
       onDidReceiveBackgroundNotificationResponse: _onNotificationResponse,
@@ -1135,8 +926,6 @@ void main() async {
         _handledNotificationActionIds.clear();
       }
     });
-
-    // Removed late notification callback registration, moved to top of main()
 
     // Foreground listener — check for stored alarm when app resumes
     FGBGEvents.instance.stream.listen((event) async {
