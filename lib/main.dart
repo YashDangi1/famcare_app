@@ -1028,6 +1028,19 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   tz_data.initializeTimeZones();
 
+  // STEP 0: Initialize notifications immediately so action callbacks (like "I Took It") fire reliably
+  try {
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = InitializationSettings(android: androidSettings);
+    await FlutterLocalNotificationsPlugin().initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse: _onNotificationResponse,
+    );
+  } catch (e) {
+    debugPrint("Early notification plugin init failed: $e");
+  }
+
   // STEP 1: Check for alarm FIRST — lightweight, fast.
   bool alarmMode = false;
   try {
@@ -1123,14 +1136,7 @@ void main() async {
       }
     });
 
-    // Re-register notification callback directly (must be top-level @pragma function)
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
-    await AlarmService().notificationsPlugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _onNotificationResponse,
-      onDidReceiveBackgroundNotificationResponse: _onNotificationResponse,
-    );
+    // Removed late notification callback registration, moved to top of main()
 
     // Foreground listener — check for stored alarm when app resumes
     FGBGEvents.instance.stream.listen((event) async {
