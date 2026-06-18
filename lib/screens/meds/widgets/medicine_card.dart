@@ -87,7 +87,8 @@ class MedicineCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool lowStock = med.qty <= med.frequency * 3;
+    final threshold = med.refillReminderThreshold ?? (med.frequency * 3);
+    final bool lowStock = med.qty <= threshold;
     final isLight = Theme.of(context).brightness == Brightness.light;
     
     final primaryColor = isLight ? const Color(0xFF0EA5E9) : AppTheme.cyanAccent;
@@ -126,15 +127,7 @@ class MedicineCard extends StatelessWidget {
               InkWell(
                 borderRadius: BorderRadius.circular(20),
                 onLongPress: onShowOptions,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => MedicineLogScreen(
-                      medicationId: med.id!,
-                      medicineName: med.name,
-                    ),
-                  ),
-                ),
+                onTap: onToggleExpand,
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
@@ -188,7 +181,7 @@ class MedicineCard extends StatelessWidget {
                                     borderRadius: BorderRadius.circular(10),
                                     border: Border.all(color: lowStock ? errorColor.withValues(alpha: 0.3) : secondaryColor.withValues(alpha: 0.3)),
                                   ),
-                                  child: Text("${med.qty} left",
+                                  child: Text("${med.qty} left" + (lowStock ? " • low stock" : ""),
                                     style: TextStyle(color: lowStock ? errorColor : secondaryColor, fontSize: 12, fontWeight: FontWeight.bold),
                                   ),
                                 ),
@@ -261,7 +254,16 @@ class MedicineCard extends StatelessWidget {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('Qty: ${med.qty}', style: Theme.of(context).textTheme.titleLarge),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Qty: ${med.qty}', style: Theme.of(context).textTheme.titleLarge),
+                              if (med.refillReminderThreshold != null)
+                                Text('Alerts at ${med.refillReminderThreshold} left', style: TextStyle(color: textColor, fontSize: 12))
+                              else if (!med.isAsNeeded && med.frequency > 0)
+                                Text('Alerts at $threshold left (auto)', style: TextStyle(color: textColor, fontSize: 12)),
+                            ],
+                          ),
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -277,7 +279,7 @@ class MedicineCard extends StatelessWidget {
                               ElevatedButton.icon(
                                 onPressed: onRefill,
                                 icon: const Icon(LucideIcons.packagePlus, size: 16),
-                                label: const Text('Refill'),
+                                label: const Text('Refill now'),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: primaryColor.withValues(alpha: 0.2),
                                   foregroundColor: primaryColor,
@@ -287,6 +289,29 @@ class MedicineCard extends StatelessWidget {
                             ],
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => MedicineLogScreen(
+                                  medicationId: med.id!,
+                                  medicineName: med.name,
+                                ),
+                              ),
+                            );
+                          },
+                          icon: Icon(LucideIcons.history, size: 16, color: primaryColor),
+                          label: const Text('View Logs'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: primaryColor,
+                            side: BorderSide(color: primaryColor.withValues(alpha: 0.5)),
+                          ),
+                        ),
                       ),
                     ],
                   ),

@@ -20,6 +20,7 @@ import 'screens/meds/widgets/medicine_card.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'providers/medication_provider.dart';
 import 'providers/theme_provider.dart';
@@ -52,11 +53,104 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   bool _isRefillCollapsed = false;
   final Set<String> _dismissedRefillMeds = {};
   String _selectedFilter = 'All'; // 'Today', 'All', 'Refills', 'Inactive'
+  
+  // Phase 5: Meds Overview & Logs
+  int _todayTaken = 0;
+  int _todayMissed = 0;
+  int _todayNeedAction = 0;
+  List<Map<String, dynamic>> _recentLogs = [];
+  bool _isLoadingTodayLogs = true;
+  bool _logsFetchError = false;
 
   @override
   void initState() {
     super.initState();
+    _loadDismissedRefills();
     _fetchMedications();
+  }
+
+  Future<void> _loadDismissedRefills() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys();
+      final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      
+      for (String key in keys) {
+        if (key.startsWith('refill_dismiss_')) {
+          final parts = key.split('_');
+          if (parts.length >= 5) {
+            final date = parts[4];
+            if (date != todayStr) {
+              await prefs.remove(key); // clear old
+            } else {
+              _dismissedRefillMeds.add(parts[3]); // medId
+            }
+          }
+        }
+      }
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  Future<void> _fetchTodayLogs() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingTodayLogs = true;
+        _logsFetchError = false;
+      });
+    }
+    try {
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) {
+        if (mounted) {
+          setState(() {
+            _isLoadingTodayLogs = false;
+            _logsFetchError = true;
+          });
+        }
+        return;
+      }
+      
+      final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      
+      final logsResponse = await _supabase
+          .from('medicine_logs')
+          .select('*')
+          .eq('user_id', userId)
+          .gte('created_at', '${todayStr}T00:00:00')
+          .order('created_at', ascending: false)
+          .limit(100);
+          
+      int taken = 0;
+      int missed = 0;
+      int snoozed = 0;
+      
+      for (var row in logsResponse) {
+        final status = row['status'] as String?;
+        if (status == 'taken') taken++;
+        else if (status == 'missed') missed++;
+        else if (status == 'snoozed') snoozed++;
+      }
+      
+      if (mounted) {
+        setState(() {
+          _todayTaken = taken;
+          _todayMissed = missed;
+          _todayNeedAction = snoozed;
+          _recentLogs = List<Map<String, dynamic>>.from(logsResponse.take(3));
+          _isLoadingTodayLogs = false;
+          _logsFetchError = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetching today logs: $e");
+      if (mounted) {
+        setState(() {
+          _isLoadingTodayLogs = false;
+          _logsFetchError = true;
+        });
+      }
+    }
   }
 
   Future<void> _fetchMedications() async {
@@ -74,6 +168,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
 
       // Trigger Riverpod fetch (it updates the UI automatically)
       await ref.read(medicationsProvider.notifier).fetchMedications(userId);
+      _fetchTodayLogs(); // non-blocking parallel load
 
       if (mounted) {
         setState(() {
@@ -779,7 +874,23 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
 
                 Navigator.pop(dialogContext);
                 if (mounted) {
-                  AppSnackBar.showSuccess(context, "Refilled! New qty: $newQty");
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text("Refilled! New qty: $newQty"),
+                      backgroundColor: Colors.green,
+                      action: SnackBarAction(
+                        label: 'Undo',
+                        textColor: Colors.white,
+                        onPressed: () async {
+                           final revertedMed = med.copyWith(qty: med.qty, isActive: med.isActive);
+                           if (userId != null) {
+                             await ref.read(medicationsProvider.notifier).updateMedication(revertedMed, userId);
+                             medicineUpdatedNotifier.value++;
+                           }
+                        },
+                      ),
+                    ),
+                  );
                   medicineUpdatedNotifier.value++;
                 }
               } catch (e) {
@@ -796,31 +907,12 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   }
 
   void _openHistoryLogs() {
-    final medsState = ref.read(medicationsProvider);
-    medsState.whenData((medications) {
-      final targetMed = medications.cast<Medicine?>().firstWhere(
-            (med) => med?.id == _expandedMedId,
-            orElse: () => medications.isNotEmpty ? medications.first : null,
-          );
-
-      if (targetMed == null || targetMed.id == null) {
-        AppSnackBar.showInfo(
-          context,
-          "No medicine history available yet.",
-        );
-        return;
-      }
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => MedicineLogScreen(
-            medicationId: targetMed.id!,
-            medicineName: targetMed.name,
-          ),
-        ),
-      );
-    });
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const MedicineLogScreen(aggregated: true),
+      ),
+    );
   }
 
   @override
@@ -904,6 +996,8 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              _buildMedsOverviewStrip(),
+                              _buildHistoryLogsSection(),
                               _buildRefillCenter(medications),
                               _buildFilterStrip(),
                             ],
@@ -1003,15 +1097,196 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     );
   }
 
+  Widget _buildMedsOverviewStrip() {
+    if (_isLoadingTodayLogs) {
+      return Container(
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2.2, color: AppTheme.cyanAccent),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              "Loading today's activity",
+              style: TextStyle(color: Colors.grey[600], fontSize: 13, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_logsFetchError) {
+      return Container(
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(LucideIcons.wifiOff, size: 16, color: Colors.grey[500]),
+            const SizedBox(width: 8),
+            Text("Overview unavailable offline", style: TextStyle(color: Colors.grey[500], fontSize: 13, fontWeight: FontWeight.w500)),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildOverviewStat("Taken", _todayTaken, Colors.green),
+          _buildOverviewStat("Missed", _todayMissed, Colors.red),
+          _buildOverviewStat("Snoozed", _todayNeedAction, Colors.orange),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOverviewStat(String label, int count, Color color) {
+    return Column(
+      children: [
+        Text(count.toString(), style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+        const SizedBox(height: 4),
+        Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[600])),
+      ],
+    );
+  }
+
+  Widget _buildHistoryLogsSection() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.cyanAccent.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.cyanAccent.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: const [
+                  Icon(LucideIcons.history, size: 20, color: AppTheme.cyanAccent),
+                  SizedBox(width: 8),
+                  Text("History / Logs", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ],
+              ),
+              TextButton(
+                onPressed: _openHistoryLogs,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.cyanAccent,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text("View Logs"),
+              ),
+            ],
+          ),
+          if (_logsFetchError)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Text("History temporarily unavailable", style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+            )
+          else if (_recentLogs.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: Text("Start by taking or snoozing a reminder", style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+            )
+          else
+            Column(
+              children: _recentLogs.map((log) {
+                final status = log['status'] as String? ?? 'unknown';
+                final timeStr = log['created_at'] as String?;
+                final time = timeStr != null ? DateFormat('hh:mm a').format(DateTime.parse(timeStr)) : '';
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Row(
+                    children: [
+                      Icon(
+                        status == 'taken' ? LucideIcons.checkCircle2 : status == 'missed' ? LucideIcons.xCircle : LucideIcons.moon,
+                        size: 14,
+                        color: status == 'taken' ? Colors.green : status == 'missed' ? Colors.red : Colors.orange,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "${log['medicine_name']} — $time",
+                          style: TextStyle(fontSize: 13, color: Colors.grey[800]),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  int _effectiveRefillThreshold(Medicine med) {
+    return med.refillReminderThreshold ?? (med.frequency * 3);
+  }
+
+  int? _estimateDaysLeft(Medicine med) {
+    if (med.isAsNeeded || !med.isActive || med.scheduleType != 'daily') {
+      return null;
+    }
+
+    final takeAmt = double.tryParse(med.takeAmount ?? '1') ?? 1.0;
+    if (med.frequency <= 0 || takeAmt <= 0) return null;
+
+    final estimated = (med.qty / takeAmt / med.frequency).floor();
+    return estimated < 0 ? 0 : estimated;
+  }
+
   Widget _buildRefillCenter(List<Medicine> medications) {
     if (_selectedFilter != 'All' && _selectedFilter != 'Refills' && _selectedFilter != 'Today') return const SizedBox.shrink();
 
     final lowStockMeds = medications.where((med) {
       if (med.isAsNeeded || !med.isActive) return false;
       if (_dismissedRefillMeds.contains(med.id)) return false;
-      final threshold = med.refillReminderThreshold ?? (med.frequency * 3);
+      final threshold = _effectiveRefillThreshold(med);
       return med.qty <= threshold;
-    }).toList();
+    }).toList()
+      ..sort((a, b) {
+        final aPriority = a.qty <= 0 ? 0 : 1;
+        final bPriority = b.qty <= 0 ? 0 : 1;
+        final severityCompare = aPriority.compareTo(bPriority);
+        if (severityCompare != 0) return severityCompare;
+        return a.qty.compareTo(b.qty);
+      });
 
     if (lowStockMeds.isEmpty) return const SizedBox.shrink();
 
@@ -1054,42 +1329,74 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          ...displayedMeds.map((med) => Dismissible(
-                key: Key('refill_${med.id}'),
-                direction: DismissDirection.endToStart,
-                onDismissed: (dir) {
-                  setState(() => _dismissedRefillMeds.add(med.id!));
-                  AppSnackBar.showInfo(context, "Dismissed refill alert for today");
-                },
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 16),
-                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(LucideIcons.eyeOff, color: Colors.black54),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(med.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+          ...displayedMeds.map((med) {
+            final threshold = _effectiveRefillThreshold(med);
+            final estDaysLeft = _estimateDaysLeft(med);
+            final isCritical = med.qty <= 0;
+
+            return Dismissible(
+              key: Key('refill_${med.id}'),
+              direction: DismissDirection.endToStart,
+              onDismissed: (dir) async {
+                setState(() => _dismissedRefillMeds.add(med.id!));
+                try {
+                  final prefs = await SharedPreferences.getInstance();
+                  final userId = _supabase.auth.currentUser?.id ?? 'unknown';
+                  final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+                  await prefs.setBool('refill_dismiss_${userId}_${med.id}_$todayStr', true);
+                } catch (_) {}
+                if (mounted) AppSnackBar.showInfo(context, "Dismissed refill alert for today");
+              },
+              background: Container(
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 16),
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
+                child: const Icon(LucideIcons.eyeOff, color: Colors.black54),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(med.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                          Text("Alert at $threshold left", style: TextStyle(fontSize: 12, color: Colors.red[400])),
+                          if (estDaysLeft != null && med.qty > 0)
+                            Text("Est: $estDaysLeft days left", style: TextStyle(fontSize: 12, color: Colors.red[400]))
+                          else if (med.qty > 0)
+                            Text("Estimate unavailable for this schedule", style: TextStyle(fontSize: 12, color: Colors.red[400])),
+                        ],
                       ),
-                      Text("${med.qty} left", style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold)),
-                      const SizedBox(width: 12),
-                      ElevatedButton(
-                        onPressed: () => _showRefillDialog(med),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        child: const Text("Refill"),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isCritical ? Colors.red : Colors.orange[100],
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                    ],
-                  ),
+                      child: Text(
+                        isCritical ? "Out of stock" : "${med.qty} left",
+                        style: TextStyle(color: isCritical ? Colors.white : Colors.red[700], fontWeight: FontWeight.bold, fontSize: 12)
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton(
+                      onPressed: () => _showRefillDialog(med),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isCritical ? Colors.red : Colors.orange[700],
+                        foregroundColor: Colors.white,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      child: Text(isCritical ? "Refill now" : "Refill soon"),
+                    ),
+                  ],
                 ),
-              )),
+              ),
+            );
+          }),
         ],
       ),
     );
@@ -1105,7 +1412,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     } else if (_selectedFilter == 'Inactive') {
       activeMeds = [];
     } else if (_selectedFilter == 'Refills') {
-      activeMeds = activeMeds.where((m) => m.qty <= (m.refillReminderThreshold ?? m.frequency * 3)).toList();
+      activeMeds = activeMeds.where((m) => m.qty <= _effectiveRefillThreshold(m)).toList();
       inactiveMeds = [];
     }
 

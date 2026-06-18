@@ -548,7 +548,12 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
         children: [
           const Text("Step 3 of 4", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          const Text("Schedule & Reminders", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const Text("Schedule", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Text(
+            "Choose when this medicine starts and how often it should be taken.",
+            style: TextStyle(color: Colors.grey[600], fontSize: 14),
+          ),
           const SizedBox(height: 24),
 
           _buildScheduleRadio('daily', 'Daily (take every day)'),
@@ -597,11 +602,18 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
               ),
             ),
           
-          const Divider(height: 32),
-          
-          ListTile(
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey[200]!),
+            ),
+            child: ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text("Start Date: ${DateFormat('dd MMM yyyy').format(startDate)}", style: const TextStyle(fontWeight: FontWeight.w500)),
+            title: Text("Schedule starts on ${DateFormat('dd MMM yyyy').format(startDate)}", style: const TextStyle(fontWeight: FontWeight.w500)),
+            subtitle: const Text("This date is used for reminders and stock planning."),
             trailing: const Icon(LucideIcons.calendar, color: AppTheme.primaryBlue),
             onTap: () async {
               final date = await showDatePicker(
@@ -615,6 +627,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
                 recalcQty();
               });
             },
+            ),
           ),
           
           const Divider(height: 32),
@@ -711,8 +724,14 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
         children: [
           const Text("Step 4 of 4", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          const Text("Stock, Refill & Notes", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const Text("Stock & Refill", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 24),
+
+          if (isAsNeeded)
+             Padding(
+               padding: const EdgeInsets.only(bottom: 16.0),
+               child: Text("Auto-calculation is disabled for 'Take as needed' meds. Please enter your stock manually.", style: TextStyle(color: Colors.grey[700], fontSize: 13, fontStyle: FontStyle.italic)),
+             ),
 
           if (scheduleType != 'specific_dates' && !isAsNeeded) ...[
             TextField(
@@ -720,6 +739,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 labelText: "Duration (Days)",
+                helperText: "Used to estimate total planned doses",
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onChanged: (_) => recalcQty(),
@@ -731,7 +751,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
             controller: qtyController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText: "Total Quantity (Pills/Doses remaining)",
+              labelText: "Current stock (Pills/Doses remaining)",
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             )
           ),
@@ -741,8 +761,8 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
             controller: refillReminderController,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText: "Refill Reminder",
-              hintText: "Remind me when X pills left",
+              labelText: "Alert me when stock reaches...",
+              hintText: "e.g. 5",
               prefixIcon: const Icon(LucideIcons.bell),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             )
@@ -753,7 +773,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
             controller: notesController,
             maxLines: 3,
             decoration: InputDecoration(
-              labelText: "Doctor's instructions / Notes",
+              labelText: "Instructions or notes",
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             ),
           ),
