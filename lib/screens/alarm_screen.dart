@@ -83,18 +83,32 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
     });
   }
 
-  Future<void> _handleMissedDose() async {
+  Future<void> _handleMissedDose({bool explicitSkip = false}) async {
     if (_isActionTaken) return; // ✅ Double execution rokna
     _isActionTaken = true;
     
     try {
       await Alarm.stop(widget.alarmId);
-      await _logDoseStatus('missed');
+      await _logDoseStatus(explicitSkip ? 'skipped' : 'missed');
       
-      // ✅ WhatsApp Notification Logic
-      await _informFamilyOfMissedDose();
+      // ✅ WhatsApp Notification Logic (Only for missed, not for intentionally skipped unless requested)
+      if (!explicitSkip) {
+        await _informFamilyOfMissedDose();
+      }
       
+      try {
+        await ActivityService.log(
+          actionType: explicitSkip ? 'MEDICINE_SKIPPED' : 'MEDICINE_MISSED',
+          description: '${explicitSkip ? 'Skipped' : 'Missed'} ${widget.medicineName}',
+        );
+      } catch (e) {
+        debugPrint('Activity log error: $e');
+      }
+
       if (mounted) {
+        if (explicitSkip) {
+          AppSnackBar.showSuccess(context, "Dose skipped. Logged successfully.");
+        }
         if (Navigator.canPop(context)) {
           Navigator.of(context).pop();
         } else {
@@ -102,7 +116,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
         }
       }
     } catch (e) {
-      debugPrint("Error logging missed dose: $e");
+      debugPrint("Error logging missed/skipped dose: $e");
     }
   }
 
@@ -171,8 +185,78 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
 
   Future<void> _onTakeLaterWithFeedback() async {
     if (_isProcessing) return;
+    
+    // Show snooze options
+    final int? mins = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: const Color(0xFF1A2332),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Snooze for...", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12, runSpacing: 12,
+              children: [
+                _snoozeChip(ctx, 10, "10 mins"),
+                _snoozeChip(ctx, 20, "20 mins"),
+                _snoozeChip(ctx, 30, "30 mins"),
+                _snoozeChip(ctx, 60, "1 hour"),
+              ],
+            ),
+            const SizedBox(height: 24),
+          ],
+        ),
+      )
+    );
+
+    if (mins == null) return; // cancelled
+
     setState(() => _isProcessing = true);
-    await _onTakeLater();
+    await _onTakeLater(mins);
+    if (mounted) setState(() => _isProcessing = false);
+  }
+
+  Widget _snoozeChip(BuildContext ctx, int minutes, String label) {
+    return ActionChip(
+      label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      backgroundColor: Colors.white.withOpacity(0.1),
+      labelStyle: const TextStyle(color: Colors.white),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: Colors.transparent)),
+      onPressed: () => Navigator.pop(ctx, minutes),
+    );
+  }
+
+  Future<void> _onSkipWithFeedback() async {
+    if (_isProcessing) return;
+    
+    // Confirm skip
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A2332),
+        title: const Text("Skip Dose?", style: TextStyle(color: Colors.white)),
+        content: Text("Are you sure you want to skip taking ${widget.medicineName}?", style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel", style: TextStyle(color: Colors.grey))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[400]),
+            child: const Text("Yes, Skip", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      )
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isProcessing = true);
+    await _handleMissedDose(explicitSkip: true);
     if (mounted) setState(() => _isProcessing = false);
   }
 
@@ -268,7 +352,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
     }
   }
 
-  Future<void> _onTakeLater() async {
+  Future<void> _onTakeLater(int snoozeMinutes) async {
     if (_isActionTaken) return;
     _isActionTaken = true;
     _autoDismissTimer?.cancel();
@@ -281,6 +365,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
         originalId: baseId,
         medicineName: widget.medicineName,
         originalTime: widget.scheduledTime,
+        snoozeDurationMinutes: snoozeMinutes,
       );
 
       // Only log if valid medicationId
@@ -295,7 +380,7 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
       } catch (_) {}
 
       if (mounted) {
-        AppSnackBar.showSuccess(context, "Reminder set for 30 min later");
+        AppSnackBar.showSuccess(context, "Reminder set for $snoozeMinutes min later");
         if (Navigator.canPop(context)) {
           Navigator.of(context).pop();
         } else {
@@ -434,25 +519,44 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
                 const Spacer(),
                 // Buttons
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 40),
-                  child: Row(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
+                  child: Column(
                     children: [
-                      Expanded(
-                        child: _buildAlarmButton(
-                          label: "Take Later",
-                          color: Colors.amber[700]!,
-                          onTap: _onTakeLaterWithFeedback,
-                          isLoading: _isProcessing,
-                        ),
-                      ),
-                      const SizedBox(width: 20),
-                      Expanded(
+                      SizedBox(
+                        width: double.infinity,
                         child: _buildAlarmButton(
                           label: "I Took It",
+                          icon: LucideIcons.checkCircle,
                           color: Colors.green[600]!,
                           onTap: _onTakeItWithFeedback,
                           isLoading: _isProcessing,
                         ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildAlarmButton(
+                              label: "Snooze",
+                              icon: LucideIcons.clock,
+                              color: Colors.amber[700]!,
+                              onTap: _onTakeLaterWithFeedback,
+                              isLoading: _isProcessing,
+                              isSmall: true,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: _buildAlarmButton(
+                              label: "Skip",
+                              icon: LucideIcons.xCircle,
+                              color: Colors.red[400]!.withOpacity(0.8),
+                              onTap: _onSkipWithFeedback,
+                              isLoading: _isProcessing,
+                              isSmall: true,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -468,24 +572,18 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
 
   Widget _buildAlarmButton({
     required String label,
+    required IconData icon,
     required Color color,
     required VoidCallback onTap,
     bool isLoading = false,
+    bool isSmall = false,
   }) {
-    return ElevatedButton(
+    return ElevatedButton.icon(
       onPressed: isLoading ? null : onTap,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: color,
-        disabledBackgroundColor: color.withOpacity(0.6),
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        elevation: 10,
-        shadowColor: color.withOpacity(0.5),
-      ),
-      child: isLoading
+      icon: isLoading 
+          ? const SizedBox.shrink() 
+          : Icon(icon, size: isSmall ? 20 : 28),
+      label: isLoading
           ? const SizedBox(
               width: 24,
               height: 24,
@@ -493,11 +591,22 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
             )
           : Text(
               label,
-              style: const TextStyle(
-                fontSize: 18,
+              style: TextStyle(
+                fontSize: isSmall ? 16 : 20,
                 fontWeight: FontWeight.bold,
               ),
             ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        disabledBackgroundColor: color.withOpacity(0.6),
+        foregroundColor: Colors.white,
+        padding: EdgeInsets.symmetric(vertical: isSmall ? 16 : 20),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(isSmall ? 16 : 24),
+        ),
+        elevation: 8,
+        shadowColor: color.withOpacity(0.5),
+      ),
     );
   }
 }

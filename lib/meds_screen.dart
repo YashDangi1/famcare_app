@@ -61,6 +61,8 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   List<Map<String, dynamic>> _recentLogs = [];
   bool _isLoadingTodayLogs = true;
   bool _logsFetchError = false;
+  
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -917,98 +919,100 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = ref.watch(themeProvider) == ThemeMode.dark;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("My Medications"),
-        actions: [
-          IconButton(
-            icon: const Icon(LucideIcons.history, color: AppTheme.cyanAccent),
-            tooltip: "History / Logs",
-            onPressed: _openHistoryLogs,
-          ),
-          IconButton(
-            icon: const Icon(LucideIcons.alarmClock, color: AppTheme.orangeAccent),
-            tooltip: "Test Alarm (1 min)",
-            onPressed: () async {
-              try {
-                final testTime = DateTime.now().add(const Duration(minutes: 1));
-                const testId = 99999;
-
-                await AlarmService().scheduleAlarm(
-                  id: testId,
-                  medicineName: "TEST ALARM 🔔",
-                  dosage: "1 tablet",
-                  imagePath: '',
-                  time: testTime,
-                );
-
-                final alarms = await Alarm.getAlarms();
-                final wasSet = alarms.any((a) => a.id == testId);
-
-                if (mounted) {
-                  AppSnackBar.showSuccess(
-                    context,
-                    wasSet
-                        ? "✅ Test alarm set! Will ring at ${testTime.hour}:${testTime.minute.toString().padLeft(2, '0')}"
-                        : "❌ Alarm NOT set — check permissions!",
-                  );
-                }
-              } catch (e) {
-                if (mounted) AppSnackBar.showError(context, "Error: $e");
-              }
-            },
-          ),
-          IconButton(
-            icon: const Icon(LucideIcons.bellRing, color: AppTheme.cyanAccent),
-            tooltip: "Alarm Setup",
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const AlarmSetupScreen()),
-            ),
-          ),
-          IconButton(
-            icon: Icon(
-              ref.watch(themeProvider) == ThemeMode.dark 
-                ? LucideIcons.sun 
-                : LucideIcons.moon,
-              color: AppTheme.cyanAccent,
-            ),
-            tooltip: "Toggle Theme",
-            onPressed: () {
-              ref.read(themeProvider.notifier).toggleTheme();
-            },
-          ),
-          IconButton(
-            icon: const Icon(LucideIcons.helpCircle, color: AppTheme.textSecondary),
-            onPressed: () => _showPermissionGuide(),
-          ),
-        ],
-      ),
       body: ref.watch(medicationsProvider).when(
-            data: (medications) => RefreshIndicator(
-              onRefresh: _fetchMedications,
-              color: AppTheme.cyanAccent,
-              child: medications.isEmpty
-                  ? _buildEmptyState()
-                  : CustomScrollView(
-                      slivers: [
-                        SliverToBoxAdapter(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildMedsOverviewStrip(),
-                              _buildHistoryLogsSection(),
-                              _buildRefillCenter(medications),
-                              _buildFilterStrip(),
-                            ],
-                          ),
+            data: (medications) {
+              final activeMedsCount = medications.where((m) => m.isActive).length;
+              final lowStockCount = medications.where((m) => m.isActive && m.qty <= _effectiveRefillThreshold(m)).length;
+              
+              String subtitle = "";
+              if (_todayNeedAction > 0) subtitle += "$_todayNeedAction due • ";
+              if (_todayMissed > 0) subtitle += "$_todayMissed missed • ";
+              if (lowStockCount > 0) subtitle += "$lowStockCount low stock • ";
+              if (subtitle.isEmpty) subtitle = "All caught up today";
+              else subtitle = subtitle.substring(0, subtitle.length - 3);
+
+              return RefreshIndicator(
+                onRefresh: _fetchMedications,
+                color: AppTheme.cyanAccent,
+                child: CustomScrollView(
+                  slivers: [
+                    SliverAppBar(
+                      floating: true,
+                      pinned: true,
+                      expandedHeight: 110.0,
+                      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                      flexibleSpace: FlexibleSpaceBar(
+                        titlePadding: const EdgeInsets.only(left: 16, bottom: 16),
+                        title: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("My Medicines", 
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold, 
+                                fontSize: 20, 
+                                color: isDark ? Colors.white : Colors.black87
+                              )
+                            ),
+                            Text(
+                              subtitle,
+                              style: TextStyle(
+                                fontSize: 11, 
+                                color: isDark ? Colors.grey[400] : Colors.grey[600], 
+                                fontWeight: FontWeight.w500
+                              ),
+                            ),
+                          ],
                         ),
-                        SliverFillRemaining(
-                          child: _buildGroupedSlotView(medications),
+                      ),
+                      actions: [
+                        IconButton(
+                          icon: const Icon(LucideIcons.search),
+                          onPressed: () {
+                             // Search logic
+                          },
                         ),
+                        IconButton(
+                          icon: const Icon(LucideIcons.scanLine),
+                          tooltip: "Scan Prescription",
+                          onPressed: () {
+                             // Route to prescription scanner
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(isDark ? LucideIcons.sun : LucideIcons.moon),
+                          onPressed: () => ref.read(themeProvider.notifier).toggleTheme(),
+                        ),
+                        const SizedBox(width: 8),
                       ],
                     ),
-            ),
+                    if (medications.isEmpty)
+                      SliverFillRemaining(child: _buildEmptyState())
+                    else
+                      SliverToBoxAdapter(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildMedsOverviewStrip(),
+                            _buildNextDoseHeroCard(medications),
+                            _buildRefillCenter(medications),
+                            _buildFilterStrip(),
+                          ],
+                        ),
+                      ),
+                    if (medications.isNotEmpty)
+                      SliverPadding(
+                        padding: const EdgeInsets.only(bottom: 80),
+                        sliver: SliverToBoxAdapter(
+                          child: _buildGroupedSlotView(medications),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
             loading: () => const Center(
                 child: CircularProgressIndicator(color: AppTheme.cyanAccent)),
             error: (err, stack) => Center(
@@ -1070,29 +1074,77 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   }
 
   Widget _buildFilterStrip() {
-    final filters = ['Today', 'All', 'Refills', 'Inactive'];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: filters.map((f) {
-          final isSelected = _selectedFilter == f;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(f),
-              selected: isSelected,
-              onSelected: (val) {
-                if (val) setState(() => _selectedFilter = f);
-              },
-              selectedColor: AppTheme.cyanAccent.withOpacity(0.2),
-              labelStyle: TextStyle(
-                color: isSelected ? AppTheme.cyanAccent : Colors.grey[700],
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
+    final filters = ['Today', 'All', 'Low Stock', 'Paused', 'Completed'];
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    onChanged: (val) => setState(() => _searchQuery = val),
+                    decoration: InputDecoration(
+                      hintText: "Search medicine, dosage, slot...",
+                      hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
+                      prefixIcon: const Icon(LucideIcons.search, size: 20, color: Colors.grey),
+                      filled: true,
+                      fillColor: Colors.grey[100],
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(LucideIcons.slidersHorizontal, color: Colors.black87),
+                    onPressed: () {
+                      // Open sort bottom sheet
+                    },
+                  ),
+                ),
+              ],
             ),
-          );
-        }).toList(),
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: filters.map((f) {
+                final isSelected = _selectedFilter == f;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(f),
+                    selected: isSelected,
+                    onSelected: (val) {
+                      if (val) setState(() => _selectedFilter = f);
+                    },
+                    selectedColor: Colors.black87,
+                    backgroundColor: Colors.white,
+                    side: BorderSide(color: isSelected ? Colors.black87 : Colors.grey[300]!),
+                    labelStyle: TextStyle(
+                      color: isSelected ? Colors.white : Colors.black87,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                      fontSize: 13,
+                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1176,6 +1228,169 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
         const SizedBox(height: 4),
         Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[600])),
       ],
+    );
+  }
+
+  Widget _buildNextDoseHeroCard(List<Medicine> medications) {
+    final activeMeds = medications.where((m) => m.isActive && !m.isPaused).toList();
+    if (activeMeds.isEmpty) return const SizedBox.shrink();
+
+    Medicine? nextMed;
+    TimeOfDay? earliestTime;
+    final now = TimeOfDay.now();
+
+    for (final med in activeMeds) {
+      if (med.isTaken) continue; 
+      for (final slot in med.slotTypes) {
+        final startStr = _slotPrefs['${slot}_start'];
+        if (startStr != null) {
+          final tParts = startStr.split(':');
+          if (tParts.length == 2) {
+            final tod = TimeOfDay(hour: int.parse(tParts[0]), minute: int.parse(tParts[1]));
+            if (tod.hour > now.hour || (tod.hour == now.hour && tod.minute > now.minute)) {
+              if (earliestTime == null || (tod.hour < earliestTime.hour || (tod.hour == earliestTime.hour && tod.minute < earliestTime.minute))) {
+                earliestTime = tod;
+                nextMed = med;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (nextMed == null) {
+       return Container(
+         margin: const EdgeInsets.symmetric(horizontal: 16),
+         padding: const EdgeInsets.all(16),
+         decoration: BoxDecoration(
+           color: Colors.green.withValues(alpha: 0.1),
+           borderRadius: BorderRadius.circular(20),
+           border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+         ),
+         child: const Row(
+           children: [
+             Icon(LucideIcons.checkCircle2, color: Colors.green),
+             SizedBox(width: 12),
+             Text("All caught up for now", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+           ],
+         ),
+       );
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [AppTheme.cyanAccent, AppTheme.cyanAccent.withValues(alpha: 0.8)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.cyanAccent.withValues(alpha: 0.3),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  "Next Dose in ${earliestTime!.hour - now.hour}h ${(earliestTime.minute - now.minute).abs()}m",
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12),
+                ),
+              ),
+              const Icon(LucideIcons.clock, color: Colors.white, size: 20),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: nextMed.imagePath != null && File(nextMed.imagePath!).existsSync()
+                    ? ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.file(File(nextMed.imagePath!), fit: BoxFit.cover))
+                    : const Icon(LucideIcons.pill, color: AppTheme.cyanAccent, size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      nextMed.name,
+                      style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      nextMed.dosage,
+                      style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (nextMed.foodInstruction != null && nextMed.foodInstruction!.isNotEmpty)
+            Row(
+              children: [
+                const Icon(LucideIcons.info, color: Colors.white70, size: 14),
+                const SizedBox(width: 6),
+                Text(
+                  nextMed.foodInstruction!,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ],
+            ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () {
+                    AppSnackBar.showSuccess(context, "Marked as taken");
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppTheme.cyanAccent,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  child: const Text("Take Now", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              IconButton(
+                onPressed: () {
+                  AppSnackBar.showInfo(context, "Snoozed for 10 mins");
+                },
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
+                  padding: const EdgeInsets.all(14),
+                ),
+                icon: const Icon(LucideIcons.bellOff, color: Colors.white),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1272,131 +1487,136 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   }
 
   Widget _buildRefillCenter(List<Medicine> medications) {
-    if (_selectedFilter != 'All' && _selectedFilter != 'Refills' && _selectedFilter != 'Today') return const SizedBox.shrink();
+    if (_selectedFilter != 'All' && _selectedFilter != 'Low Stock' && _selectedFilter != 'Today') return const SizedBox.shrink();
 
-    final lowStockMeds = medications.where((med) {
-      if (med.isAsNeeded || !med.isActive) return false;
-      if (_dismissedRefillMeds.contains(med.id)) return false;
+    final attentionItems = <Widget>[];
+
+    // Low stock items
+    for (var med in medications) {
+      if (med.isAsNeeded || !med.isActive) continue;
+      if (_dismissedRefillMeds.contains(med.id)) continue;
+      
       final threshold = _effectiveRefillThreshold(med);
-      return med.qty <= threshold;
-    }).toList()
-      ..sort((a, b) {
-        final aPriority = a.qty <= 0 ? 0 : 1;
-        final bPriority = b.qty <= 0 ? 0 : 1;
-        final severityCompare = aPriority.compareTo(bPriority);
-        if (severityCompare != 0) return severityCompare;
-        return a.qty.compareTo(b.qty);
-      });
+      if (med.qty <= threshold) {
+        final isCritical = med.qty <= 0;
+        attentionItems.add(
+          _buildAttentionCard(
+            title: "${med.name} is running low",
+            subtitle: isCritical ? "Out of stock" : "Only ${med.qty} doses left",
+            icon: LucideIcons.packageSearch,
+            color: isCritical ? Colors.red : Colors.orange,
+            ctaText: "Refill Now",
+            onTapCta: () => _showRefillDialog(med),
+          ),
+        );
+      }
+    }
 
-    if (lowStockMeds.isEmpty) return const SizedBox.shrink();
+    // Paused medicines
+    for (var med in medications) {
+      if (med.isActive && med.isPaused) {
+        attentionItems.add(
+          _buildAttentionCard(
+            title: "${med.name} is paused",
+            subtitle: "Reminders are turned off",
+            icon: LucideIcons.pauseCircle,
+            color: Colors.blueGrey,
+            ctaText: "Resume",
+            onTapCta: () => _togglePauseMedicine(med),
+          ),
+        );
+      }
+    }
 
-    final displayedMeds = _isRefillCollapsed ? lowStockMeds.take(2).toList() : lowStockMeds;
+    if (attentionItems.isEmpty) return const SizedBox.shrink();
 
+    final displayedItems = attentionItems.take(3).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Attention Needed", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              if (attentionItems.length > 3)
+                Text("View All (${attentionItems.length})", style: TextStyle(color: AppTheme.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 140,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            scrollDirection: Axis.horizontal,
+            itemCount: displayedItems.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (ctx, i) => displayedItems[i],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAttentionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required String ctaText,
+    required VoidCallback onTapCta,
+  }) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      width: 240,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.red[50],
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.red[200]!),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(LucideIcons.alertTriangle, color: Colors.red, size: 20),
-              const SizedBox(width: 8),
-              const Text("Refill Center", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
-              const Spacer(),
-              if (lowStockMeds.length > 2)
-                InkWell(
-                  onTap: () => setState(() => _isRefillCollapsed = !_isRefillCollapsed),
-                  child: Row(
-                    children: [
-                      Text(
-                        _isRefillCollapsed ? 'View All (${lowStockMeds.length})' : 'Show Less',
-                        style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.w600, fontSize: 13),
-                      ),
-                      Icon(
-                        _isRefillCollapsed ? LucideIcons.chevronDown : LucideIcons.chevronUp,
-                        color: Colors.red[700],
-                        size: 16,
-                      ),
-                    ],
-                  ),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  shape: BoxShape.circle,
                 ),
+                child: Icon(icon, color: color, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[800], fontSize: 14),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          ...displayedMeds.map((med) {
-            final threshold = _effectiveRefillThreshold(med);
-            final estDaysLeft = _estimateDaysLeft(med);
-            final isCritical = med.qty <= 0;
-
-            return Dismissible(
-              key: Key('refill_${med.id}'),
-              direction: DismissDirection.endToStart,
-              onDismissed: (dir) async {
-                setState(() => _dismissedRefillMeds.add(med.id!));
-                try {
-                  final prefs = await SharedPreferences.getInstance();
-                  final userId = _supabase.auth.currentUser?.id ?? 'unknown';
-                  final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-                  await prefs.setBool('refill_dismiss_${userId}_${med.id}_$todayStr', true);
-                } catch (_) {}
-                if (mounted) AppSnackBar.showInfo(context, "Dismissed refill alert for today");
-              },
-              background: Container(
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 16),
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(8)),
-                child: const Icon(LucideIcons.eyeOff, color: Colors.black54),
+          const SizedBox(height: 8),
+          Text(subtitle, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+          const Spacer(),
+          SizedBox(
+            width: double.infinity,
+            height: 36,
+            child: ElevatedButton(
+              onPressed: onTapCta,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: color,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(med.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          Text("Alert at $threshold left", style: TextStyle(fontSize: 12, color: Colors.red[400])),
-                          if (estDaysLeft != null && med.qty > 0)
-                            Text("Est: $estDaysLeft days left", style: TextStyle(fontSize: 12, color: Colors.red[400]))
-                          else if (med.qty > 0)
-                            Text("Estimate unavailable for this schedule", style: TextStyle(fontSize: 12, color: Colors.red[400])),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isCritical ? Colors.red : Colors.orange[100],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        isCritical ? "Out of stock" : "${med.qty} left",
-                        style: TextStyle(color: isCritical ? Colors.white : Colors.red[700], fontWeight: FontWeight.bold, fontSize: 12)
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    ElevatedButton(
-                      onPressed: () => _showRefillDialog(med),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isCritical ? Colors.red : Colors.orange[700],
-                        foregroundColor: Colors.white,
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      child: Text(isCritical ? "Refill now" : "Refill soon"),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
+              child: Text(ctaText, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            ),
+          ),
         ],
       ),
     );
@@ -1406,13 +1626,23 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     List<Medicine> activeMeds = medications.where((m) => m.isActive).toList();
     List<Medicine> inactiveMeds = medications.where((m) => !m.isActive).toList();
     
+    // Apply search filter
+    if (_searchQuery.trim().isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      activeMeds = activeMeds.where((m) => m.name.toLowerCase().contains(q) || m.dosage.toLowerCase().contains(q)).toList();
+      inactiveMeds = inactiveMeds.where((m) => m.name.toLowerCase().contains(q) || m.dosage.toLowerCase().contains(q)).toList();
+    }
+
+    // Apply category filters
     if (_selectedFilter == 'Today') {
-      // Very basic "Today" filter: only show active meds. (Could be expanded to check specific dates)
       inactiveMeds = [];
-    } else if (_selectedFilter == 'Inactive') {
+    } else if (_selectedFilter == 'Completed') {
       activeMeds = [];
-    } else if (_selectedFilter == 'Refills') {
+    } else if (_selectedFilter == 'Low Stock') {
       activeMeds = activeMeds.where((m) => m.qty <= _effectiveRefillThreshold(m)).toList();
+      inactiveMeds = [];
+    } else if (_selectedFilter == 'Paused') {
+      activeMeds = activeMeds.where((m) => m.isPaused).toList();
       inactiveMeds = [];
     }
 
@@ -1421,6 +1651,8 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     final slotOrder = ['morning', 'afternoon', 'evening', 'night', 'custom'];
 
     return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.all(16),
       itemCount: slotOrder.where((s) => groups[s]!.isNotEmpty).length +
           (inactiveMeds.isNotEmpty ? 1 : 0),

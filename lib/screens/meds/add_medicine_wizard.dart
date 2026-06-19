@@ -43,50 +43,49 @@ class AddMedicineWizard extends StatefulWidget {
 class _AddMedicineWizardState extends State<AddMedicineWizard> {
   final PageController _pageController = PageController();
   int _currentStep = 0;
-  final int _totalSteps = 4;
+  final int _totalSteps = 5;
 
   // Step 1: Basics
   late TextEditingController nameController;
   late TextEditingController conditionController;
-  String? selectedForm = 'Pill';
+  late TextEditingController strengthController;
+  String? strengthUnit = 'mg';
+  late TextEditingController takeAmountController;
+  String? selectedForm = 'tablet';
   String? selectedColor = 'White';
   File? selectedImage;
   final _imagePicker = ImagePicker();
 
-  // Step 2: Dosage
-  late TextEditingController strengthController;
-  String? strengthUnit = 'mg';
-  late TextEditingController takeAmountController;
-  String? foodInstruction;
-  bool isAsNeeded = false;
-
-  // Step 3: Schedule
+  // Step 2: Schedule
   String scheduleType = 'daily';
   List<String> specificDates = [];
   late TextEditingController everyXDaysController;
   List<String> selectedSlots = [];
   List<TimeOfDay> customAlarmTimes = [];
-  DateTime startDate = DateTime.now();
+  bool isAsNeeded = false;
+  String scheduleFrequency = 'slot-based';
 
-  // Step 4: Stock & Refill
+  // Step 3: Duration & Quantity
+  DateTime startDate = DateTime.now();
   late TextEditingController durationController;
   late TextEditingController qtyController;
   late TextEditingController refillReminderController;
+
+  // Step 4: Reminder Setup
+  bool useFullscreenAlarm = true;
+  int retryMinutes = 10;
+
+  // Step 5: Instructions
+  String? foodInstruction;
   late TextEditingController notesController;
 
-  final List<String> forms = ['Pill', 'Capsule', 'Liquid', 'Drops', 'Inhaler', 'Injection', 'Patch', 'Ointment'];
-  final List<String> colors = ['White', 'Red', 'Blue', 'Green', 'Yellow', 'Pink', 'Orange', 'Purple'];
+  final List<String> forms = ['tablet', 'capsule', 'syrup', 'injection', 'drops', 'powder'];
   final List<String> units = ['mg', 'mcg', 'g', 'ml', '%', 'drops', 'puffs'];
-
-  Map<String, Color> colorMap = {
-    'White': Colors.white,
-    'Red': Colors.redAccent,
-    'Blue': Colors.blueAccent,
-    'Green': Colors.green,
-    'Yellow': Colors.amber,
-    'Pink': Colors.pinkAccent,
-    'Orange': Colors.orangeAccent,
-    'Purple': Colors.purpleAccent,
+  final List<String> colors = ['White', 'Red', 'Blue', 'Green', 'Yellow', 'Pink', 'Orange', 'Purple'];
+  final Map<String, Color> colorMap = {
+    'White': Colors.white, 'Red': Colors.redAccent, 'Blue': Colors.blueAccent,
+    'Green': Colors.green, 'Yellow': Colors.amber, 'Pink': Colors.pinkAccent,
+    'Orange': Colors.orangeAccent, 'Purple': Colors.purpleAccent,
   };
 
   @override
@@ -94,33 +93,42 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
     super.initState();
     final m = widget.existingMed;
     
+    // Step 1
     nameController = TextEditingController(text: m?.name);
     conditionController = TextEditingController(text: m?.condition ?? '');
-    selectedForm = m?.form ?? 'Pill';
-    selectedColor = m?.color ?? 'White';
-    _loadExistingImage();
-
     strengthController = TextEditingController(text: m?.strength?.toString() ?? '');
     strengthUnit = m?.strengthUnit ?? 'mg';
     takeAmountController = TextEditingController(text: m?.takeAmount ?? '1');
-    foodInstruction = m?.foodInstruction;
-    isAsNeeded = m?.isAsNeeded ?? false;
+    selectedForm = m?.form ?? 'tablet';
+    if (!forms.contains(selectedForm?.toLowerCase())) selectedForm = 'tablet';
+    selectedColor = m?.color ?? 'White';
+    if (!colors.contains(selectedColor)) selectedColor = 'White';
+    _loadExistingImage();
 
+    // Step 2
+    isAsNeeded = m?.isAsNeeded ?? false;
     scheduleType = m?.scheduleType ?? 'daily';
     specificDates = List.from(m?.specificDates ?? []);
     everyXDaysController = TextEditingController(text: (m?.everyXDays ?? 1).toString());
     selectedSlots = List.from(m?.slotTypes ?? []);
-    if (selectedSlots.isEmpty && m != null) {
+    if (selectedSlots.isEmpty && m != null && !isAsNeeded) {
       if (m.frequency >= 1) selectedSlots.add('morning');
       if (m.frequency >= 2) selectedSlots.add('afternoon');
       if (m.frequency >= 3) selectedSlots.add('night');
     }
     customAlarmTimes = (m?.customTimes ?? []).map((t) => _parseTime(t)).whereType<TimeOfDay>().toList();
-    startDate = m?.startDate ?? DateTime.now();
+    if (isAsNeeded) scheduleFrequency = 'as needed';
+    else if (selectedSlots.contains('custom')) scheduleFrequency = 'custom times';
+    else scheduleFrequency = 'slot-based';
 
-    durationController = TextEditingController(text: (m?.durationDays ?? 7).toString());
-    qtyController = TextEditingController(text: (m?.qty ?? 7).toString());
-    refillReminderController = TextEditingController(text: m?.refillReminderThreshold?.toString() ?? '');
+    // Step 3
+    startDate = m?.startDate ?? DateTime.now();
+    durationController = TextEditingController(text: (m?.durationDays ?? 30).toString());
+    qtyController = TextEditingController(text: (m?.qty ?? 0).toString());
+    refillReminderController = TextEditingController(text: m?.refillReminderThreshold?.toString() ?? '5');
+
+    // Step 5
+    foodInstruction = m?.foodInstruction;
     notesController = TextEditingController(text: m?.notes ?? '');
   }
 
@@ -147,15 +155,14 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
   }
 
   void recalcQty() {
+    if (isAsNeeded) return;
+
     final standardSlotCount = selectedSlots.where((s) => s != 'custom').length;
     final customSlotCount = selectedSlots.contains('custom') ? customAlarmTimes.length : 0;
     final slotCount = (standardSlotCount + customSlotCount).clamp(1, 999);
     final dur = int.tryParse(durationController.text) ?? 1;
     final everyX = max(1, int.tryParse(everyXDaysController.text) ?? 1);
     
-    // For PRN medications, let the user define qty without auto calc.
-    if (isAsNeeded) return;
-
     int qty;
     if (scheduleType == 'specific_dates') {
       qty = slotCount * specificDates.length;
@@ -165,7 +172,6 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       qty = slotCount * dur;
     }
     
-    // Multiply by take amount if it's a simple number
     final takeAmt = double.tryParse(takeAmountController.text) ?? 1.0;
     qty = (qty * takeAmt).ceil();
     
@@ -173,13 +179,16 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
   }
 
   void _nextStep() {
-    // Validation before moving next
     if (_currentStep == 0 && nameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a medicine name')));
       return;
     }
-    if (_currentStep == 2 && !isAsNeeded && selectedSlots.isEmpty) {
+    if (_currentStep == 1 && !isAsNeeded && scheduleFrequency == 'slot-based' && selectedSlots.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one time slot')));
+      return;
+    }
+    if (_currentStep == 1 && !isAsNeeded && scheduleFrequency == 'custom times' && customAlarmTimes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please add at least one custom time')));
       return;
     }
 
@@ -201,6 +210,18 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
   }
 
   void _save() {
+    // Convert frequency selections into proper format before saving
+    if (scheduleFrequency == 'as needed') {
+      isAsNeeded = true;
+    } else {
+      isAsNeeded = false;
+      if (scheduleFrequency == 'custom times') {
+        if (!selectedSlots.contains('custom')) selectedSlots.add('custom');
+      } else if (scheduleFrequency == 'slot-based') {
+        selectedSlots.remove('custom');
+      }
+    }
+
     widget.onSave(
       dialogContext: context,
       existingMed: widget.existingMed,
@@ -220,7 +241,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       everyXDays: int.tryParse(everyXDaysController.text) ?? 1,
       specificDates: specificDates,
       notes: notesController.text,
-      dur: int.tryParse(durationController.text) ?? 7,
+      dur: int.tryParse(durationController.text) ?? 30,
       start: startDate,
       qty: int.tryParse(qtyController.text) ?? 0,
       refillReminderThreshold: int.tryParse(refillReminderController.text),
@@ -232,7 +253,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(widget.existingMed == null ? "Add Medicine" : "Edit Medicine"),
+        title: Text(widget.existingMed == null ? "Add Medicine" : "Edit Medicine", style: const TextStyle(fontWeight: FontWeight.bold)),
         leading: IconButton(
           icon: const Icon(LucideIcons.x),
           onPressed: () => Navigator.pop(context),
@@ -242,7 +263,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
           child: LinearProgressIndicator(
             value: (_currentStep + 1) / _totalSteps,
             backgroundColor: Colors.grey[200],
-            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryBlue),
+            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.cyanAccent),
           ),
         ),
       ),
@@ -251,12 +272,13 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
           Expanded(
             child: PageView(
               controller: _pageController,
-              physics: const NeverScrollableScrollPhysics(), // Disable swipe
+              physics: const NeverScrollableScrollPhysics(),
               children: [
                 _buildStep1(),
                 _buildStep2(),
                 _buildStep3(),
                 _buildStep4(),
+                _buildStep5(),
               ],
             ),
           ),
@@ -271,9 +293,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))
-        ]
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))]
       ),
       child: SafeArea(
         child: Row(
@@ -281,17 +301,17 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
           children: [
             TextButton(
               onPressed: _prevStep,
-              child: Text(_currentStep == 0 ? "Cancel" : "Back", style: const TextStyle(fontSize: 16)),
+              child: Text(_currentStep == 0 ? "Cancel" : "Back", style: TextStyle(fontSize: 16, color: Colors.grey[700])),
             ),
             ElevatedButton(
               onPressed: _nextStep,
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryBlue,
+                backgroundColor: AppTheme.cyanAccent,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              child: Text(_currentStep == _totalSteps - 1 ? "Save" : "Next", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              child: Text(_currentStep == _totalSteps - 1 ? "Save & Activate" : "Next", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
@@ -299,8 +319,24 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
     );
   }
 
+  Widget _buildStepHeader(String stepText, String title, String subtitle) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(stepText, style: const TextStyle(color: AppTheme.cyanAccent, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text(title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+        if (subtitle.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(subtitle, style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+        ],
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
   // ==========================================
-  // STEP 1: Basics & Appearance
+  // STEP 1: Basic Info
   // ==========================================
   Widget _buildStep1() {
     return SingleChildScrollView(
@@ -308,40 +344,78 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Step 1 of 4", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text("Basics & Appearance", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 24),
+          _buildStepHeader("Step 1 of 5", "Basic Info", "Let's start with the medicine details."),
           
           TextField(
             controller: nameController,
-            style: const TextStyle(fontSize: 18),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
             decoration: InputDecoration(
               labelText: "Medicine Name*",
-              prefixIcon: const Icon(LucideIcons.pill),
+              prefixIcon: const Icon(LucideIcons.pill, color: AppTheme.cyanAccent),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             )
           ),
           const SizedBox(height: 16),
+          
           TextField(
             controller: conditionController,
             decoration: InputDecoration(
-              labelText: "Condition (e.g. Blood Pressure) - Optional",
-              prefixIcon: const Icon(LucideIcons.activity),
+              labelText: "Condition/Purpose (e.g. Blood Pressure) - Optional",
+              prefixIcon: const Icon(LucideIcons.activity, color: Colors.grey),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             )
           ),
+          const SizedBox(height: 16),
+          
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: strengthController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: "Strength",
+                    hintText: "e.g. 500",
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  )
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 1,
+                child: DropdownButtonFormField<String>(
+                  value: strengthUnit,
+                  decoration: InputDecoration(border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                  items: units.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
+                  onChanged: (val) => setState(() => strengthUnit = val),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          TextField(
+            controller: takeAmountController,
+            decoration: InputDecoration(
+              labelText: "Amount to take per dose",
+              hintText: "e.g. 1, 0.5, 2",
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onChanged: (_) => recalcQty(),
+          ),
           const SizedBox(height: 24),
           
-          const Text("Shape / Form", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const Text("Medicine Type", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8, runSpacing: 8,
             children: forms.map((f) => ChoiceChip(
               label: Text(f),
-              selected: selectedForm == f,
+              selected: selectedForm?.toLowerCase() == f,
               onSelected: (val) => setState(() => selectedForm = val ? f : selectedForm),
-              selectedColor: AppTheme.primaryBlue.withOpacity(0.2),
+              selectedColor: AppTheme.cyanAccent.withOpacity(0.2),
+              labelStyle: TextStyle(color: selectedForm?.toLowerCase() == f ? AppTheme.cyanAccent : Colors.black87),
             )).toList(),
           ),
           const SizedBox(height: 24),
@@ -357,9 +431,9 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
                 decoration: BoxDecoration(
                   color: colorMap[c],
                   shape: BoxShape.circle,
-                  border: Border.all(color: selectedColor == c ? AppTheme.primaryBlue : Colors.grey[300]!, width: selectedColor == c ? 3 : 1),
+                  border: Border.all(color: selectedColor == c ? AppTheme.cyanAccent : Colors.grey[300]!, width: selectedColor == c ? 3 : 1),
                   boxShadow: [
-                    if (selectedColor == c) BoxShadow(color: AppTheme.primaryBlue.withOpacity(0.3), blurRadius: 8)
+                    if (selectedColor == c) BoxShadow(color: AppTheme.cyanAccent.withOpacity(0.3), blurRadius: 8)
                   ]
                 ),
               ),
@@ -386,7 +460,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
                       children: [
                         Icon(LucideIcons.camera, color: Colors.grey[400], size: 40),
                         const SizedBox(height: 8),
-                        Text("Add Medication Photo", style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w500)),
+                        Text("Add Medication Photo (Optional)", style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w500)),
                       ]
                     ),
             ),
@@ -397,7 +471,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
   }
 
   // ==========================================
-  // STEP 2: Dosage & Instructions
+  // STEP 2: Schedule
   // ==========================================
   Widget _buildStep2() {
     return SingleChildScrollView(
@@ -405,52 +479,386 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Step 2 of 4", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text("Dosage & Instructions", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          _buildStepHeader("Step 2 of 5", "Schedule", "How often do you take this?"),
+          
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey[300]!),
+            ),
+            child: Column(
+              children: [
+                _buildFreqRadio('slot-based', 'Regular Slots (Morning, Night)'),
+                const Divider(height: 1),
+                _buildFreqRadio('custom times', 'Specific Times (e.g. 10:00 AM)'),
+                const Divider(height: 1),
+                _buildFreqRadio('as needed', 'As Needed (PRN)'),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 32),
+          
+          if (scheduleFrequency == 'slot-based') ...[
+            const Text("Select Time Slots", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: [
+                _buildSlotChip('morning', 'Morning', LucideIcons.sunrise),
+                _buildSlotChip('afternoon', 'Afternoon', LucideIcons.sun),
+                _buildSlotChip('evening', 'Evening', LucideIcons.sunset),
+                _buildSlotChip('night', 'Night', LucideIcons.moon),
+              ],
+            ),
+          ] else if (scheduleFrequency == 'custom times') ...[
+            const Text("Select Exact Times", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            ...customAlarmTimes.asMap().entries.map((entry) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[200]!)),
+                child: ListTile(
+                  title: Text(entry.value.format(context), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  leading: const Icon(LucideIcons.clock, color: AppTheme.cyanAccent),
+                  trailing: IconButton(
+                    icon: const Icon(LucideIcons.xCircle, color: Colors.red),
+                    onPressed: () => setState(() { customAlarmTimes.removeAt(entry.key); recalcQty(); }),
+                  ),
+                ),
+              );
+            }),
+            OutlinedButton.icon(
+              onPressed: () async {
+                final picked = await showTimePicker(context: context, initialTime: TimeOfDay.now());
+                if (picked != null) setState(() { customAlarmTimes.add(picked); recalcQty(); });
+              },
+              icon: const Icon(LucideIcons.plus),
+              label: const Text("Add Custom Time"),
+              style: OutlinedButton.styleFrom(foregroundColor: AppTheme.cyanAccent, padding: const EdgeInsets.symmetric(vertical: 12)),
+            )
+          ] else if (scheduleFrequency == 'as needed') ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.orange[200]!)),
+              child: const Row(
+                children: [
+                  Icon(LucideIcons.info, color: Colors.orange),
+                  SizedBox(width: 12),
+                  Expanded(child: Text("You won't receive scheduled alarms, but you can log doses directly from the home screen.", style: TextStyle(color: Colors.orange))),
+                ],
+              ),
+            )
+          ],
+
+          if (scheduleFrequency != 'as needed') ...[
+            const SizedBox(height: 32),
+            const Text("Frequency Details", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(12)),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: _buildScheduleRadio('daily', 'Every day')),
+                      Expanded(child: _buildScheduleRadio('every_x_days', 'Every X days')),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(child: _buildScheduleRadio('specific_dates', 'Specific dates')),
+                      if (scheduleType == 'specific_dates')
+                        IconButton(
+                          icon: const Icon(LucideIcons.calendar, color: AppTheme.cyanAccent),
+                          onPressed: () => _showMultiDatePicker(),
+                        )
+                    ],
+                  ),
+                  if (scheduleType == 'every_x_days')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Row(
+                        children: [
+                          const Text("Interval in days: "),
+                          SizedBox(
+                            width: 80,
+                            child: TextField(
+                              controller: everyXDaysController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.center,
+                              decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+                              onChanged: (_) => recalcQty(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (scheduleType == 'specific_dates' && specificDates.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 12, top: 8),
+                      child: Wrap(
+                        spacing: 6, runSpacing: 6,
+                        children: specificDates.map((d) {
+                          final display = DateFormat('dd MMM').format(DateTime.parse(d));
+                          return Chip(
+                            label: Text(display, style: const TextStyle(fontSize: 12)),
+                            deleteIcon: const Icon(LucideIcons.x, size: 14),
+                            onDeleted: () => setState(() {
+                              specificDates.remove(d);
+                              recalcQty();
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                ],
+              ),
+            )
+          ]
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFreqRadio(String value, String label) {
+    return RadioListTile<String>(
+      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
+      value: value,
+      groupValue: scheduleFrequency,
+      activeColor: AppTheme.cyanAccent,
+      onChanged: (val) {
+        setState(() {
+          scheduleFrequency = val!;
+          if (scheduleFrequency == 'as needed') isAsNeeded = true;
+          else isAsNeeded = false;
+          recalcQty();
+        });
+      },
+    );
+  }
+
+  Widget _buildScheduleRadio(String value, String label) {
+    return RadioListTile<String>(
+      title: Text(label, style: const TextStyle(fontSize: 14)),
+      value: value,
+      groupValue: scheduleType,
+      activeColor: AppTheme.cyanAccent,
+      contentPadding: EdgeInsets.zero,
+      onChanged: (val) => setState(() { scheduleType = val!; recalcQty(); }),
+    );
+  }
+
+  Widget _buildSlotChip(String value, String label, IconData icon) {
+    final isSelected = selectedSlots.contains(value);
+    return FilterChip(
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: isSelected ? Colors.white : AppTheme.cyanAccent),
+          const SizedBox(width: 6),
+          Text(label),
+        ],
+      ),
+      selected: isSelected,
+      selectedColor: AppTheme.cyanAccent,
+      labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black87),
+      onSelected: (val) {
+        setState(() {
+          val ? selectedSlots.add(value) : selectedSlots.remove(value);
+          recalcQty();
+        });
+      },
+    );
+  }
+
+  // ==========================================
+  // STEP 3: Duration & Quantity
+  // ==========================================
+  Widget _buildStep3() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildStepHeader("Step 3 of 5", "Duration & Quantity", "Plan your stock and refills."),
+          
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[200]!)),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text("Start Date", style: TextStyle(color: Colors.grey, fontSize: 13)),
+              subtitle: Text(DateFormat('dd MMM yyyy').format(startDate), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.black)),
+              trailing: const Icon(LucideIcons.calendar, color: AppTheme.cyanAccent),
+              onTap: () async {
+                final date = await showDatePicker(context: context, initialDate: startDate, firstDate: DateTime.now().subtract(const Duration(days: 365)), lastDate: DateTime.now().add(const Duration(days: 365)));
+                if (date != null) setState(() { startDate = date; recalcQty(); });
+              },
+            ),
+          ),
           const SizedBox(height: 24),
+
+          if (!isAsNeeded) ...[
+            TextField(
+              controller: durationController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: "Duration (Days)",
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                suffixText: "Days",
+              ),
+              onChanged: (_) => recalcQty(),
+            ),
+            const SizedBox(height: 24),
+          ],
 
           Row(
             children: [
               Expanded(
-                flex: 2,
                 child: TextField(
-                  controller: strengthController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  controller: qtyController,
+                  keyboardType: TextInputType.number,
                   decoration: InputDecoration(
-                    labelText: "Strength",
-                    hintText: "e.g. 500",
+                    labelText: "Current Stock",
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   )
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                flex: 1,
-                child: DropdownButtonFormField<String>(
-                  value: strengthUnit,
+                child: TextField(
+                  controller: refillReminderController,
+                  keyboardType: TextInputType.number,
                   decoration: InputDecoration(
+                    labelText: "Refill Alert At",
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  items: units.map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
-                  onChanged: (val) => setState(() => strengthUnit = val),
+                  )
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
+          
+          if (!isAsNeeded)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: AppTheme.cyanAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: AppTheme.cyanAccent.withOpacity(0.3))),
+              child: Row(
+                children: [
+                  const Icon(LucideIcons.lightbulb, color: AppTheme.cyanAccent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      "Smart Assist: At this schedule, ${qtyController.text.isEmpty ? '0' : qtyController.text} doses will last about ${((int.tryParse(qtyController.text) ?? 0) / (double.tryParse(takeAmountController.text) ?? 1) / max(1, (selectedSlots.length == 0 ? 1 : selectedSlots.length))).floor()} days.",
+                      style: const TextStyle(fontSize: 13, color: Colors.black87),
+                    ),
+                  ),
+                ],
+              ),
+            )
+        ],
+      ),
+    );
+  }
 
-          TextField(
-            controller: takeAmountController,
-            decoration: InputDecoration(
-              labelText: "Amount per dose",
-              hintText: "e.g. 1 pill, 2 puffs",
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+  // ==========================================
+  // STEP 4: Reminder Setup
+  // ==========================================
+  Widget _buildStep4() {
+    if (isAsNeeded) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(LucideIcons.bellOff, size: 80, color: Colors.grey[300]),
+              const SizedBox(height: 20),
+              const Text("No Alarms Required", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              const Text("As-needed medicines do not use scheduled alarms.", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 16)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildStepHeader("Step 4 of 5", "Reminder Setup", "Customize how you want to be notified."),
+          
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(12)),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Full-Screen Alarm", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      const SizedBox(height: 4),
+                      Text("Wake up the device and show a full-screen alert. Recommended for critical meds.", style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: useFullscreenAlarm,
+                  activeColor: AppTheme.cyanAccent,
+                  onChanged: (v) => setState(() => useFullscreenAlarm = v),
+                )
+              ],
             ),
-            onChanged: (_) => recalcQty(),
           ),
           const SizedBox(height: 24),
+          
+          const Text("Retry if Missed", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<int>(
+            value: retryMinutes,
+            decoration: InputDecoration(border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+            items: const [
+              DropdownMenuItem(value: 0, child: Text("Don't retry")),
+              DropdownMenuItem(value: 5, child: Text("Retry after 5 minutes")),
+              DropdownMenuItem(value: 10, child: Text("Retry after 10 minutes")),
+              DropdownMenuItem(value: 30, child: Text("Retry after 30 minutes")),
+            ],
+            onChanged: (val) => setState(() => retryMinutes = val ?? 10),
+          ),
+          
+          const SizedBox(height: 32),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green[200]!)),
+            child: const Row(
+              children: [
+                Icon(LucideIcons.checkCircle2, color: Colors.green),
+                SizedBox(width: 12),
+                Expanded(child: Text("Permissions are looking good! Your alarms are set to ring reliably.", style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600))),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
 
+  // ==========================================
+  // STEP 5: Instructions & Review
+  // ==========================================
+  Widget _buildStep5() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildStepHeader("Step 5 of 5", "Instructions & Review", "Final details before saving."),
+          
           const Text("Food Instructions", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           Wrap(
@@ -462,37 +870,53 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
               _foodChip('no_matter', 'No Matter', LucideIcons.minusCircle),
             ],
           ),
+          const SizedBox(height: 24),
+          
+          TextField(
+            controller: notesController,
+            maxLines: 3,
+            decoration: InputDecoration(
+              labelText: "Note to self or caregiver",
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
           const SizedBox(height: 32),
-
+          
+          const Text("Final Review", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.orange[50],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.orange[200]!)
-            ),
-            child: Row(
+            decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey[200]!)),
+            child: Column(
               children: [
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text("Take as needed (PRN)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      SizedBox(height: 4),
-                      Text("For pain or symptom relief, not on a strict schedule.", style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    ],
-                  ),
-                ),
-                Switch(
-                  value: isAsNeeded,
-                  activeColor: AppTheme.orangeAccent,
-                  onChanged: (val) {
-                    setState(() {
-                      isAsNeeded = val;
-                      recalcQty();
-                    });
-                  },
-                ),
+                _reviewRow(LucideIcons.pill, "Medicine", "${nameController.text.isEmpty ? 'Unnamed' : nameController.text} • ${takeAmountController.text} ${selectedForm?.toLowerCase()}"),
+                const Divider(),
+                _reviewRow(LucideIcons.calendarClock, "Schedule", isAsNeeded ? "As Needed" : "${scheduleFrequency == 'slot-based' ? selectedSlots.length : customAlarmTimes.length} times a day"),
+                const Divider(),
+                _reviewRow(LucideIcons.package, "Stock", "${qtyController.text} remaining • alerts at ${refillReminderController.text}"),
+                const Divider(),
+                _reviewRow(LucideIcons.bell, "Reminders", useFullscreenAlarm ? "Full-screen enabled" : "Notifications only"),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _reviewRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey[600]),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
               ],
             ),
           )
@@ -514,271 +938,8 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       ),
       selected: isSelected,
       onSelected: (val) => setState(() => foodInstruction = val ? value : null),
-      selectedColor: AppTheme.primaryBlue,
+      selectedColor: AppTheme.cyanAccent,
       labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black87),
-    );
-  }
-
-  // ==========================================
-  // STEP 3: Schedule
-  // ==========================================
-  Widget _buildStep3() {
-    if (isAsNeeded) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(LucideIcons.calendarCheck, size: 80, color: Colors.grey[300]),
-              const SizedBox(height: 20),
-              const Text("No Schedule Required", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              const Text("You marked this medicine as 'Take as needed'. It won't have scheduled alarms, but you can log it anytime.", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 16)),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("Step 3 of 4", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text("Schedule", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(
-            "Choose when this medicine starts and how often it should be taken.",
-            style: TextStyle(color: Colors.grey[600], fontSize: 14),
-          ),
-          const SizedBox(height: 24),
-
-          _buildScheduleRadio('daily', 'Daily (take every day)'),
-          Row(
-            children: [
-              Expanded(child: _buildScheduleRadio('every_x_days', 'Every X days')),
-              if (scheduleType == 'every_x_days')
-                SizedBox(
-                  width: 80,
-                  child: TextField(
-                    controller: everyXDaysController,
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
-                    decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-                    onChanged: (_) => recalcQty(),
-                  ),
-                ),
-            ],
-          ),
-          Row(
-            children: [
-              Expanded(child: _buildScheduleRadio('specific_dates', 'Specific dates')),
-              if (scheduleType == 'specific_dates')
-                IconButton(
-                  icon: const Icon(LucideIcons.calendar, color: AppTheme.primaryBlue),
-                  onPressed: () => _showMultiDatePicker(),
-                )
-            ],
-          ),
-          if (scheduleType == 'specific_dates' && specificDates.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 32, top: 8),
-              child: Wrap(
-                spacing: 6, runSpacing: 6,
-                children: specificDates.map((d) {
-                  final display = DateFormat('dd MMM').format(DateTime.parse(d));
-                  return Chip(
-                    label: Text(display, style: const TextStyle(fontSize: 12)),
-                    deleteIcon: const Icon(LucideIcons.x, size: 14),
-                    onDeleted: () => setState(() {
-                      specificDates.remove(d);
-                      recalcQty();
-                    }),
-                  );
-                }).toList(),
-              ),
-            ),
-          
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey[200]!),
-            ),
-            child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text("Schedule starts on ${DateFormat('dd MMM yyyy').format(startDate)}", style: const TextStyle(fontWeight: FontWeight.w500)),
-            subtitle: const Text("This date is used for reminders and stock planning."),
-            trailing: const Icon(LucideIcons.calendar, color: AppTheme.primaryBlue),
-            onTap: () async {
-              final date = await showDatePicker(
-                context: context,
-                initialDate: startDate,
-                firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                lastDate: DateTime.now().add(const Duration(days: 365))
-              );
-              if (date != null) setState(() {
-                startDate = date;
-                recalcQty();
-              });
-            },
-            ),
-          ),
-          
-          const Divider(height: 32),
-          
-          const Text("When to take", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8, runSpacing: 8,
-            children: [
-              _buildSlotChip('morning', 'Morning', LucideIcons.sunrise),
-              _buildSlotChip('afternoon', 'Afternoon', LucideIcons.sun),
-              _buildSlotChip('evening', 'Evening', LucideIcons.sunset),
-              _buildSlotChip('night', 'Night', LucideIcons.moon),
-              _buildSlotChip('custom', 'Custom', LucideIcons.clock),
-            ],
-          ),
-          if (selectedSlots.contains('custom')) ...[
-            const SizedBox(height: 16),
-            ...customAlarmTimes.asMap().entries.map((entry) {
-              return ListTile(
-                title: Text(entry.value.format(context), style: const TextStyle(fontWeight: FontWeight.bold)),
-                leading: const Icon(LucideIcons.clock, color: AppTheme.primaryBlue),
-                trailing: IconButton(
-                  icon: const Icon(LucideIcons.trash2, color: Colors.red),
-                  onPressed: () => setState(() {
-                    customAlarmTimes.removeAt(entry.key);
-                    recalcQty();
-                  }),
-                ),
-              );
-            }),
-            TextButton.icon(
-              onPressed: () async {
-                final picked = await showTimePicker(context: context, initialTime: TimeOfDay.now());
-                if (picked != null) setState(() {
-                  customAlarmTimes.add(picked);
-                  recalcQty();
-                });
-              },
-              icon: const Icon(LucideIcons.plus),
-              label: const Text("Add Custom Time"),
-            )
-          ]
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScheduleRadio(String value, String label) {
-    return RadioListTile<String>(
-      title: Text(label),
-      value: value,
-      groupValue: scheduleType,
-      activeColor: AppTheme.primaryBlue,
-      contentPadding: EdgeInsets.zero,
-      onChanged: (val) => setState(() {
-        scheduleType = val!;
-        recalcQty();
-      }),
-    );
-  }
-
-  Widget _buildSlotChip(String value, String label, IconData icon) {
-    final isSelected = selectedSlots.contains(value);
-    return FilterChip(
-      label: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: isSelected ? Colors.white : AppTheme.primaryBlue),
-          const SizedBox(width: 6),
-          Text(label),
-        ],
-      ),
-      selected: isSelected,
-      selectedColor: AppTheme.primaryBlue,
-      labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black87),
-      onSelected: (val) {
-        setState(() {
-          val ? selectedSlots.add(value) : selectedSlots.remove(value);
-          recalcQty();
-        });
-      },
-    );
-  }
-
-  // ==========================================
-  // STEP 4: Stock & Refill
-  // ==========================================
-  Widget _buildStep4() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text("Step 4 of 4", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text("Stock & Refill", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 24),
-
-          if (isAsNeeded)
-             Padding(
-               padding: const EdgeInsets.only(bottom: 16.0),
-               child: Text("Auto-calculation is disabled for 'Take as needed' meds. Please enter your stock manually.", style: TextStyle(color: Colors.grey[700], fontSize: 13, fontStyle: FontStyle.italic)),
-             ),
-
-          if (scheduleType != 'specific_dates' && !isAsNeeded) ...[
-            TextField(
-              controller: durationController,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: "Duration (Days)",
-                helperText: "Used to estimate total planned doses",
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onChanged: (_) => recalcQty(),
-            ),
-            const SizedBox(height: 16),
-          ],
-
-          TextField(
-            controller: qtyController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: "Current stock (Pills/Doses remaining)",
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            )
-          ),
-          const SizedBox(height: 16),
-
-          TextField(
-            controller: refillReminderController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: "Alert me when stock reaches...",
-              hintText: "e.g. 5",
-              prefixIcon: const Icon(LucideIcons.bell),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            )
-          ),
-          const SizedBox(height: 24),
-
-          TextField(
-            controller: notesController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              labelText: "Instructions or notes",
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -884,13 +1045,13 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
                         child: Container(
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? const Color(0xFF0EA5E9)
+                                ? AppTheme.cyanAccent
                                 : isToday
-                                    ? Colors.blue[50]
+                                    ? AppTheme.cyanAccent.withOpacity(0.1)
                                     : Colors.grey[100],
                             borderRadius: BorderRadius.circular(8),
                             border: isToday
-                                ? Border.all(color: const Color(0xFF0EA5E9))
+                                ? Border.all(color: AppTheme.cyanAccent)
                                 : null,
                           ),
                           child: Column(
@@ -943,7 +1104,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
                               Navigator.pop(ctx);
                             },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0EA5E9),
+                        backgroundColor: AppTheme.cyanAccent,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -954,7 +1115,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
                         selectedDates.isEmpty
                             ? 'Select dates'
                             : 'Confirm ${selectedDates.length} dates',
-                        style: const TextStyle(fontSize: 16),
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
