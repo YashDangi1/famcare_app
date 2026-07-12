@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'activity_service.dart';
+import 'offline_sync_service.dart';
 
 class VitalsService {
   final _supabase = Supabase.instance.client;
@@ -16,7 +17,7 @@ class VitalsService {
     final user = _supabase.auth.currentUser;
     if (user == null) throw Exception("User not authenticated");
 
-    await _supabase.from('vitals').insert({
+    final payload = {
       'user_id': user.id,
       'bp_systolic': bpSystolic,
       'bp_diastolic': bpDiastolic,
@@ -25,7 +26,20 @@ class VitalsService {
       'weight': weight,
       'temperature': temperature,
       'measured_at': DateTime.now().toIso8601String(),
-    });
+    };
+
+    try {
+      await _supabase.from('vitals').insert(payload);
+    } catch (e) {
+      if (OfflineSyncService.isOfflineError(e)) {
+        await OfflineSyncService.instance.enqueueAction(
+          type: 'vitals_insert',
+          payload: payload,
+        );
+      } else {
+        rethrow;
+      }
+    }
 
     // Log activity for new vitals
     try {

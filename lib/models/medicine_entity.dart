@@ -38,6 +38,7 @@ class MedicineEntity {
   String scheduleType = 'daily';
   int everyXDays = 1;
   List<String> specificDates = [];
+  String taperStepsJson = '[]';
 
   String notes = '';
   bool isPaused = false;

@@ -3,15 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:flutter/services.dart';
-import 'screens/health_landing_screen.dart';
+import 'screens/health/health_hub_screen.dart';
 import 'screens/activity_feed_screen.dart';
-import 'screens/vitals_screen.dart';
-import 'screens/health_dashboard_screen.dart';
-import 'vault_screen.dart';
 import 'history_service.dart';
 import 'services/activity_service.dart';
 import 'utils/snackbar_utils.dart';
+import 'screens/family/family_hub_v2_screen.dart';
 
+@Deprecated('Use FamilyHubV2Screen instead. P0 cleanup.')
 class FamilyHubScreen extends StatefulWidget {
   const FamilyHubScreen({super.key});
 
@@ -416,7 +415,7 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => HealthLandingScreen(
+                      builder: (context) => HealthHubScreen(
                         targetUserId: memberUserId,
                         targetUserName: memberName,
                       ),
@@ -439,6 +438,14 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    
+    if (_familyGroup != null && _myStatus == 'approved') {
+      return const FamilyHubV2Screen();
+    }
+
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
@@ -459,11 +466,9 @@ class _FamilyHubScreenState extends State<FamilyHubScreen> {
           ),
         ],
       ),
-      body: _isLoading 
-          ? const Center(child: CircularProgressIndicator()) 
-          : _familyGroup == null 
+      body: _familyGroup == null 
               ? _buildSetupView() 
-              : (_myStatus == 'pending' ? _buildPendingView() : _buildMemberView()),
+              : _buildPendingView(),
     );
   }
 

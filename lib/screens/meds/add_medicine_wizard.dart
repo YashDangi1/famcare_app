@@ -9,6 +9,7 @@ import '../../../theme/app_theme.dart';
 
 class AddMedicineWizard extends StatefulWidget {
   final Medicine? existingMed;
+  final List<String> existingMedicineNames;
   final Future<void> Function({
     required BuildContext dialogContext,
     Medicine? existingMed,
@@ -27,6 +28,7 @@ class AddMedicineWizard extends StatefulWidget {
     required String scheduleType,
     required int everyXDays,
     required List<String> specificDates,
+    required List<Map<String, dynamic>> taperSteps,
     required String notes,
     required int dur,
     required DateTime start,
@@ -34,7 +36,7 @@ class AddMedicineWizard extends StatefulWidget {
     required int? refillReminderThreshold,
   }) onSave;
 
-  const AddMedicineWizard({super.key, this.existingMed, required this.onSave});
+  const AddMedicineWizard({super.key, this.existingMed, this.existingMedicineNames = const [], required this.onSave});
 
   @override
   State<AddMedicineWizard> createState() => _AddMedicineWizardState();
@@ -59,6 +61,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
   // Step 2: Schedule
   String scheduleType = 'daily';
   List<String> specificDates = [];
+  List<Map<String, dynamic>> taperSteps = [];
   late TextEditingController everyXDaysController;
   List<String> selectedSlots = [];
   List<TimeOfDay> customAlarmTimes = [];
@@ -109,6 +112,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
     isAsNeeded = m?.isAsNeeded ?? false;
     scheduleType = m?.scheduleType ?? 'daily';
     specificDates = List.from(m?.specificDates ?? []);
+    taperSteps = List.from(m?.taperSteps ?? []);
     everyXDaysController = TextEditingController(text: (m?.everyXDays ?? 1).toString());
     selectedSlots = List.from(m?.slotTypes ?? []);
     if (selectedSlots.isEmpty && m != null && !isAsNeeded) {
@@ -168,6 +172,10 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       qty = slotCount * specificDates.length;
     } else if (scheduleType == 'every_x_days') {
       qty = slotCount * (dur / everyX).ceil();
+    } else if (scheduleType == 'tapered') {
+      int taperDur = 0;
+      for (var s in taperSteps) { taperDur += (s['duration_days'] as int? ?? 1); }
+      qty = slotCount * taperDur;
     } else {
       qty = slotCount * dur;
     }
@@ -178,11 +186,41 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
     qtyController.text = qty.toString();
   }
 
+  void _proceedToNextStep() {
+    if (_currentStep < _totalSteps - 1) {
+      _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+      setState(() => _currentStep++);
+    } else {
+      _save();
+    }
+  }
+
   void _nextStep() {
     if (_currentStep == 0 && nameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a medicine name')));
       return;
     }
+    if (_currentStep == 0 && widget.existingMedicineNames.contains(nameController.text.trim().toLowerCase())) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Duplicate Medicine'),
+          content: const Text('You already have an active medicine with this exact name. Are you sure you want to add it again?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _proceedToNextStep();
+              },
+              child: const Text('Yes, Continue'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     if (_currentStep == 1 && !isAsNeeded && scheduleFrequency == 'slot-based' && selectedSlots.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select at least one time slot')));
       return;
@@ -192,12 +230,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       return;
     }
 
-    if (_currentStep < _totalSteps - 1) {
-      _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
-      setState(() => _currentStep++);
-    } else {
-      _save();
-    }
+    _proceedToNextStep();
   }
 
   void _prevStep() {
@@ -213,6 +246,8 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
     // Convert frequency selections into proper format before saving
     if (scheduleFrequency == 'as needed') {
       isAsNeeded = true;
+      selectedSlots.clear();
+      customAlarmTimes.clear();
     } else {
       isAsNeeded = false;
       if (scheduleFrequency == 'custom times') {
@@ -240,6 +275,7 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
       scheduleType: scheduleType,
       everyXDays: int.tryParse(everyXDaysController.text) ?? 1,
       specificDates: specificDates,
+      taperSteps: taperSteps,
       notes: notesController.text,
       dur: int.tryParse(durationController.text) ?? 30,
       start: startDate,
@@ -573,9 +609,11 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
                         IconButton(
                           icon: const Icon(LucideIcons.calendar, color: AppTheme.cyanAccent),
                           onPressed: () => _showMultiDatePicker(),
-                        )
+                        ),
+                      Expanded(child: _buildScheduleRadio('tapered', 'Tapered Dose')),
                     ],
                   ),
+                  if (scheduleType == 'tapered') _buildTaperUI(),
                   if (scheduleType == 'every_x_days')
                     Padding(
                       padding: const EdgeInsets.only(top: 8.0),
@@ -641,13 +679,92 @@ class _AddMedicineWizardState extends State<AddMedicineWizard> {
 
   Widget _buildScheduleRadio(String value, String label) {
     return RadioListTile<String>(
-      title: Text(label, style: const TextStyle(fontSize: 14)),
+      title: Text(label, style: const TextStyle(fontSize: 13)),
       value: value,
       groupValue: scheduleType,
       activeColor: AppTheme.cyanAccent,
       contentPadding: EdgeInsets.zero,
       onChanged: (val) => setState(() { scheduleType = val!; recalcQty(); }),
     );
+  }
+
+  Widget _buildTaperUI() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Taper Steps", style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          ...taperSteps.asMap().entries.map((e) {
+            final idx = e.key;
+            final step = e.value;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade200)),
+              child: Row(
+                children: [
+                  Text("Step ${idx+1}:", style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text("${step['dosage']} for ${step['duration_days']} days", style: const TextStyle(fontSize: 13)),
+                  ),
+                  IconButton(
+                    icon: const Icon(LucideIcons.x, size: 18, color: Colors.red),
+                    onPressed: () => setState(() { taperSteps.removeAt(idx); recalcQty(); }),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  )
+                ],
+              ),
+            );
+          }),
+          OutlinedButton.icon(
+            onPressed: _showAddTaperStepDialog,
+            icon: const Icon(LucideIcons.plus, size: 16),
+            label: const Text("Add Step"),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.cyanAccent,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: Size.zero,
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showAddTaperStepDialog() {
+    final doseCtrl = TextEditingController(text: '1');
+    final durCtrl = TextEditingController(text: '3');
+    showDialog(context: context, builder: (_) => AlertDialog(
+      title: const Text("Add Taper Step"),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(controller: doseCtrl, decoration: const InputDecoration(labelText: "Dosage (e.g. 2)")),
+          const SizedBox(height: 12),
+          TextField(controller: durCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Duration (Days)")),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+        ElevatedButton(
+          onPressed: () {
+            setState(() {
+              taperSteps.add({
+                'dosage': doseCtrl.text.trim(),
+                'duration_days': int.tryParse(durCtrl.text) ?? 1,
+              });
+              recalcQty();
+            });
+            Navigator.pop(context);
+          },
+          child: const Text("Add"),
+        )
+      ],
+    ));
   }
 
   Widget _buildSlotChip(String value, String label, IconData icon) {

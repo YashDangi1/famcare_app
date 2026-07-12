@@ -12,6 +12,7 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+  String _loadingText = 'Loading...';
   @override
   void initState() {
     super.initState();
@@ -26,11 +27,16 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // 2. Guard: wait for Supabase to be ready (may not be in alarm mode)
     int attempts = 0;
-    while (attempts < 30) {
+    while (attempts < 150) { // Wait up to 30 seconds
       try {
         Supabase.instance.client;
         break;
       } catch (_) {
+        if (attempts == 15 && mounted) {
+          setState(() {
+             _loadingText = 'Connecting to securely restore session...';
+          });
+        }
         await Future.delayed(const Duration(milliseconds: 200));
         attempts++;
       }
@@ -39,7 +45,12 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
 
     // 3. Check if user is already logged in
-    final session = Supabase.instance.client.auth.currentSession;
+    Session? session;
+    try {
+      session = Supabase.instance.client.auth.currentSession;
+    } catch (e) {
+      debugPrint("Supabase init timed out or failed: $e");
+    }
 
     // 3. Navigate based on auth state
     if (session != null) {
@@ -100,15 +111,28 @@ class _SplashScreenState extends State<SplashScreen> {
               left: 0,
               right: 0,
               child: Center(
-                child: SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      Colors.white.withValues(alpha: 0.6),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.white.withValues(alpha: 0.6),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _loadingText,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

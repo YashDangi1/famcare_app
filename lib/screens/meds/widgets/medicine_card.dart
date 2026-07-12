@@ -6,10 +6,13 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../../../models/medicine_model.dart';
 import '../../medicine_log_screen.dart';
 import '../../../theme/app_theme.dart';
+import '../../../services/alarm_action_engine.dart';
+
 
 class MedicineCard extends StatelessWidget {
   final Medicine med;
   final bool isExpanded;
+  final bool canEdit;
   final VoidCallback onDelete;
   final VoidCallback onToggleExpand;
   final VoidCallback onShowOptions;
@@ -21,6 +24,7 @@ class MedicineCard extends StatelessWidget {
     super.key,
     required this.med,
     required this.isExpanded,
+    this.canEdit = true,
     required this.onDelete,
     required this.onToggleExpand,
     required this.onShowOptions,
@@ -99,7 +103,7 @@ class MedicineCard extends StatelessWidget {
 
     return Dismissible(
       key: Key(med.id!),
-      direction: DismissDirection.endToStart,
+      direction: canEdit ? DismissDirection.endToStart : DismissDirection.none,
       background: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
@@ -114,6 +118,7 @@ class MedicineCard extends StatelessWidget {
         ),
       ),
       confirmDismiss: (_) async {
+        if (!canEdit) return false;
         onDelete();
         return false;
       },
@@ -222,11 +227,12 @@ class MedicineCard extends StatelessWidget {
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            icon: Icon(LucideIcons.edit3, size: 20, color: textColor),
-                            onPressed: onShowOptions,
-                          ),
+                          if (canEdit)
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: Icon(LucideIcons.edit3, size: 20, color: textColor),
+                              onPressed: onShowOptions,
+                            ),
                           IconButton(
                             visualDensity: VisualDensity.compact,
                             icon: Icon(
@@ -251,11 +257,15 @@ class MedicineCard extends StatelessWidget {
                     children: [
                       Text('Stock Management', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        runSpacing: 12,
                         children: [
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Text('Qty: ${med.qty}', style: Theme.of(context).textTheme.titleLarge),
                               if (med.refillReminderThreshold != null)
@@ -264,54 +274,136 @@ class MedicineCard extends StatelessWidget {
                                 Text('Alerts at $threshold left (auto)', style: TextStyle(color: textColor, fontSize: 12)),
                             ],
                           ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: Icon(LucideIcons.minusCircle, color: errorColor),
-                                onPressed: () => onUpdateQty(-1),
-                              ),
-                              IconButton(
-                                icon: Icon(LucideIcons.plusCircle, color: secondaryColor),
-                                onPressed: () => onUpdateQty(1),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton.icon(
-                                onPressed: onRefill,
-                                icon: const Icon(LucideIcons.packagePlus, size: 16),
-                                label: const Text('Refill now'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primaryColor.withValues(alpha: 0.2),
-                                  foregroundColor: primaryColor,
-                                  elevation: 0,
+                          if (canEdit)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: Icon(LucideIcons.minusCircle, color: errorColor),
+                                  onPressed: () => onUpdateQty(-1),
                                 ),
-                              ),
-                            ],
-                          ),
+                                IconButton(
+                                  icon: Icon(LucideIcons.plusCircle, color: secondaryColor),
+                                  onPressed: () => onUpdateQty(1),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: onRefill,
+                                  icon: const Icon(LucideIcons.packagePlus, size: 16),
+                                  label: const Text('Refill'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: primaryColor.withValues(alpha: 0.2),
+                                    foregroundColor: primaryColor,
+                                    elevation: 0,
+                                  ),
+                                ),
+                              ],
+                            ),
                         ],
                       ),
                       const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => MedicineLogScreen(
-                                  medicationId: med.id!,
-                                  medicineName: med.name,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => MedicineLogScreen(
+                                      medicationId: med.id!,
+                                      medicineName: med.name,
+                                    ),
+                                  ),
+                                );
+                              },
+                              icon: Icon(LucideIcons.history, size: 16, color: primaryColor),
+                              label: const Text('Logs'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: primaryColor,
+                                side: BorderSide(color: primaryColor.withValues(alpha: 0.5)),
+                              ),
+                            ),
+                          ),
+                          if (med.isAsNeeded && canEdit) ...[
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) {
+                                      double tempDose = 1.0;
+                                      return StatefulBuilder(
+                                        builder: (context, setDialogState) => AlertDialog(
+                                          backgroundColor: isLight ? Colors.white : AppTheme.surface1,
+                                          title: Text("Log PRN Dose", style: TextStyle(color: isLight ? Colors.black : Colors.white)),
+                                          content: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text("How much did you take?", style: TextStyle(color: isLight ? Colors.grey[700] : Colors.white70)),
+                                              const SizedBox(height: 20),
+                                              Row(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                children: [
+                                                  IconButton(
+                                                    icon: Icon(Icons.remove_circle_outline, color: isLight ? Colors.black : Colors.white),
+                                                    onPressed: () {
+                                                      if (tempDose > 0.25) setDialogState(() => tempDose -= 0.25);
+                                                    },
+                                                  ),
+                                                  Text(tempDose.toStringAsFixed(2).replaceAll('.00', ''), style: TextStyle(fontSize: 24, color: isLight ? Colors.black : Colors.white, fontWeight: FontWeight.bold)),
+                                                  IconButton(
+                                                    icon: Icon(Icons.add_circle_outline, color: isLight ? Colors.black : Colors.white),
+                                                    onPressed: () => setDialogState(() => tempDose += 0.25),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(context),
+                                              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+                                            ),
+                                            ElevatedButton(
+                                              style: ElevatedButton.styleFrom(backgroundColor: secondaryColor),
+                                              onPressed: () async {
+                                                Navigator.pop(context);
+                                                await AlarmActionEngine.instance.logDoseAction(
+                                                  medicationId: med.id!,
+                                                  medicineName: med.name,
+                                                  dosage: '${tempDose} unit(s)',
+                                                  status: 'taken',
+                                                  slotIndex: 0,
+                                                  scheduledTime: DateTime.now(),
+                                                  actualDose: tempDose,
+                                                  isPrn: true,
+                                                );
+                                                await AlarmActionEngine.instance.decrementQtyAtomically(med.id!, overrideTakeAmt: tempDose);
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("PRN Dose Logged!")));
+                                                }
+                                              },
+                                              child: const Text("Log", style: TextStyle(color: Colors.white)),
+                                            ),
+                                          ],
+                                        )
+                                      );
+                                    }
+                                  );
+                                },
+                                icon: const Icon(LucideIcons.checkCircle, size: 16),
+                                label: const Text('Log Dose'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: secondaryColor,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
                                 ),
                               ),
-                            );
-                          },
-                          icon: Icon(LucideIcons.history, size: 16, color: primaryColor),
-                          label: const Text('View Logs'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: primaryColor,
-                            side: BorderSide(color: primaryColor.withValues(alpha: 0.5)),
-                          ),
-                        ),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),

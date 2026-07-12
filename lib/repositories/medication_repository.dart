@@ -2,6 +2,7 @@ import 'package:isar/isar.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/medicine_model.dart';
 import '../models/medicine_entity.dart';
+import '../services/offline_sync_service.dart';
 
 class MedicationRepository {
   final SupabaseClient _supabase;
@@ -106,8 +107,13 @@ class MedicationRepository {
         });
       }
     } catch (e) {
-      // Fails silently for now; background sync will pick it up later
-      print('Warning: Supabase sync failed, medication saved locally. $e');
+      print('Warning: Supabase sync failed, queuing medication insert. $e');
+      if (OfflineSyncService.isOfflineError(e)) {
+        await OfflineSyncService.instance.enqueueAction(
+          type: 'medications_insert',
+          payload: medicine.toJson(),
+        );
+      }
     }
   }
 
@@ -122,7 +128,13 @@ class MedicationRepository {
       if (medicine.id == null || medicine.id!.startsWith('local_')) return;
       await _supabase.from('medications').update(medicine.toJson()).eq('id', medicine.id!);
     } catch (e) {
-      print('Warning: Supabase update failed, medication updated locally. $e');
+      print('Warning: Supabase update failed, queuing medication update. $e');
+      if (OfflineSyncService.isOfflineError(e)) {
+        await OfflineSyncService.instance.enqueueAction(
+          type: 'medications_update',
+          payload: medicine.toJson(),
+        );
+      }
     }
   }
 
@@ -137,7 +149,13 @@ class MedicationRepository {
       if (id.startsWith('local_')) return;
       await _supabase.from('medications').delete().eq('id', id);
     } catch (e) {
-      print('Warning: Supabase delete failed. $e');
+      print('Warning: Supabase delete failed, queuing medication delete. $e');
+      if (OfflineSyncService.isOfflineError(e)) {
+        await OfflineSyncService.instance.enqueueAction(
+          type: 'medications_delete',
+          payload: {'id': id},
+        );
+      }
     }
   }
 }

@@ -13,10 +13,12 @@ import 'models/medicine_model.dart';
 import 'screens/alarm_setup_screen.dart';
 import 'screens/medicine_log_screen.dart';
 import 'utils/snackbar_utils.dart';
+import 'services/alarm_action_engine.dart';
 import 'main.dart' show medicineUpdatedNotifier;
 import 'services/activity_service.dart';
 import 'screens/meds/add_medicine_wizard.dart';
 import 'screens/meds/widgets/medicine_card.dart';
+import 'screens/meds/widgets/refill_center_sheet.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -24,6 +26,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'providers/medication_provider.dart';
 import 'providers/theme_provider.dart';
+import 'providers/family/family_group_provider.dart';
 
 class MedsScreen extends ConsumerStatefulWidget {
   const MedsScreen({super.key});
@@ -67,8 +70,15 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   @override
   void initState() {
     super.initState();
+    medicineUpdatedNotifier.addListener(_fetchMedications);
     _loadDismissedRefills();
     _fetchMedications();
+  }
+
+  @override
+  void dispose() {
+    medicineUpdatedNotifier.removeListener(_fetchMedications);
+    super.dispose();
   }
 
   Future<void> _loadDismissedRefills() async {
@@ -186,11 +196,18 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   // ➕ ADD/EDIT MEDICINE DIALOG (Redesigned)
   // ==========================================
   Future<void> _showAddEditDialog({Medicine? existingMed}) async {
+    final currentMeds = ref.read(medicationsProvider).value ?? [];
+    final existingNames = currentMeds
+        .where((m) => m.isActive && m.id != existingMed?.id)
+        .map((m) => m.name.toLowerCase().trim())
+        .toList();
+
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AddMedicineWizard(
           existingMed: existingMed,
+          existingMedicineNames: existingNames,
           onSave: _handleSave,
         ),
       ),
@@ -501,6 +518,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     required DateTime start,
     required int qty,
     required int? refillReminderThreshold,
+    required List<Map<String, dynamic>> taperSteps,
   }) async {
     if (_isSaving) return;
     _isSaving = true;
@@ -511,7 +529,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
       return;
     }
 
-    if (selectedSlots.isEmpty) {
+    if (!isAsNeeded && selectedSlots.isEmpty) {
       AppSnackBar.showError(context, "Select at least one time slot");
       _isSaving = false;
       return;
@@ -601,6 +619,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
         isAsNeeded: isAsNeeded,
         refillReminderThreshold: refillReminderThreshold,
         condition: condition,
+        taperSteps: taperSteps,
       );
 
       if (existingMed?.id != null) {
@@ -673,7 +692,11 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     return '${hour12.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')} $period';
   }
 
-  void _showMedicineOptions(Medicine med) {
+  void _showMedicineOptions(Medicine med, bool canEditMeds) {
+    if (!canEditMeds) {
+      AppSnackBar.showError(context, "Read-only mode: You cannot edit medicines.");
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -828,83 +851,20 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     }
   }
 
-  void _showRefillDialog(Medicine med) {
-    final refillController = TextEditingController();
-    showDialog(
+  void _showRefillCenter() {
+    showModalBottomSheet(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text("Refill ${med.name}",
-            style: const TextStyle(fontWeight: FontWeight.bold)),
-        content: TextField(
-          controller: refillController,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: "Add how many tablets?",
-            prefixIcon: Icon(LucideIcons.pill),
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0EA5E9),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () async {
-              final addQty = int.tryParse(refillController.text) ?? 0;
-              if (addQty <= 0) {
-                AppSnackBar.showError(context, "Enter a valid number");
-                return;
-              }
-              try {
-                final newQty = med.qty + addQty;
-                final updatedMed = med.copyWith(qty: newQty, isActive: true);
-                final userId = _supabase.auth.currentUser?.id;
-                if (userId != null) {
-                  await ref
-                      .read(medicationsProvider.notifier)
-                      .updateMedication(updatedMed, userId);
-                }
-
-                Navigator.pop(dialogContext);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text("Refilled! New qty: $newQty"),
-                      backgroundColor: Colors.green,
-                      action: SnackBarAction(
-                        label: 'Undo',
-                        textColor: Colors.white,
-                        onPressed: () async {
-                           final revertedMed = med.copyWith(qty: med.qty, isActive: med.isActive);
-                           if (userId != null) {
-                             await ref.read(medicationsProvider.notifier).updateMedication(revertedMed, userId);
-                             medicineUpdatedNotifier.value++;
-                           }
-                        },
-                      ),
-                    ),
-                  );
-                  medicineUpdatedNotifier.value++;
-                }
-              } catch (e) {
-                debugPrint("Refill error: $e");
-                if (mounted)
-                  AppSnackBar.showError(context, "Refill failed: $e");
-              }
-            },
-            child: const Text("Add"),
-          ),
-        ],
-      ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        final medications = ref.read(medicationsProvider).value ?? [];
+        return RefillCenterSheet(
+          medications: medications,
+          onRefillComplete: () {
+            medicineUpdatedNotifier.value++;
+          },
+        );
+      },
     );
   }
 
@@ -917,9 +877,73 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     );
   }
 
+  int _slotIndexForSlot(String slot) {
+    if (slot == 'morning') return 1;
+    if (slot == 'afternoon') return 2;
+    if (slot == 'evening') return 3;
+    if (slot == 'night') return 4;
+    return 5;
+  }
+
+  Future<void> _markMedicineTakenFromHero(Medicine med, TimeOfDay scheduledTod, String slot) async {
+    if (med.id == null) {
+      AppSnackBar.showError(context, "Unable to mark dose right now");
+      return;
+    }
+
+    try {
+      final now = DateTime.now();
+      final scheduledTime = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        scheduledTod.hour,
+        scheduledTod.minute,
+      );
+
+      final success = await AlarmActionEngine.instance.takeDoseDirect(
+        medicationId: med.id!,
+        medicineName: med.name,
+        dosage: med.getCurrentDosage(scheduledTime),
+        slotIndex: _slotIndexForSlot(slot),
+        scheduledTime: scheduledTime,
+        takenEarlier: scheduledTime.isAfter(now),
+      );
+      if (!success) {
+        throw Exception('Failed to persist dose action');
+      }
+
+      await _fetchMedications();
+      if (!mounted) return;
+      
+      final newQty = (med.qty - 1).clamp(0, 99999);
+      AppSnackBar.showSuccess(
+        context,
+        newQty == 0
+            ? 'Dose marked as taken. Stock finished.'
+            : 'Dose marked as taken',
+      );
+      medicineUpdatedNotifier.value++;
+    } catch (e) {
+      debugPrint("Hero take action failed: $e");
+      if (!mounted) return;
+      AppSnackBar.showError(context, "Could not mark this dose as taken");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = ref.watch(themeProvider) == ThemeMode.dark;
+    
+    // Check family permissions
+    final membershipAsync = ref.watch(familyMembershipProvider);
+    bool canEditMeds = true;
+    if (membershipAsync is AsyncData && membershipAsync.value != null) {
+      final m = membershipAsync.value!;
+      final role = m['role'];
+      canEditMeds = (role == 'admin') || (m['can_edit_meds'] == true);
+    }
+
     return Scaffold(
       body: ref.watch(medicationsProvider).when(
             data: (medications) {
@@ -998,6 +1022,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                             _buildMedsOverviewStrip(),
                             _buildNextDoseHeroCard(medications),
                             _buildRefillCenter(medications),
+                            _buildHistoryLogsSection(),
                             _buildFilterStrip(),
                           ],
                         ),
@@ -1013,8 +1038,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                 ),
               );
             },
-            loading: () => const Center(
-                child: CircularProgressIndicator(color: AppTheme.cyanAccent)),
+            loading: () => _buildSkeletonLoader(),
             error: (err, stack) => Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1038,14 +1062,14 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
               ),
             ),
           ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: canEditMeds ? FloatingActionButton.extended(
         heroTag: 'add_medicine_fab',
         onPressed: () => _showAddEditDialog(),
         backgroundColor: AppTheme.cyanAccent,
         icon: const Icon(LucideIcons.plus, color: AppTheme.background),
         label: const Text("Add Medicine",
             style: TextStyle(color: AppTheme.background, fontWeight: FontWeight.bold)),
-      ).animate().scale(delay: 500.ms, curve: Curves.easeOutBack),
+      ).animate().scale(delay: 500.ms, curve: Curves.easeOutBack) : null,
     );
   }
 
@@ -1207,7 +1231,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey[200]!),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4)),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 10, offset: const Offset(0, 4)),
         ],
       ),
       child: Row(
@@ -1237,6 +1261,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
 
     Medicine? nextMed;
     TimeOfDay? earliestTime;
+    String? nextSlot;
     final now = TimeOfDay.now();
 
     for (final med in activeMeds) {
@@ -1251,6 +1276,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
               if (earliestTime == null || (tod.hour < earliestTime.hour || (tod.hour == earliestTime.hour && tod.minute < earliestTime.minute))) {
                 earliestTime = tod;
                 nextMed = med;
+                nextSlot = slot;
               }
             }
           }
@@ -1275,6 +1301,13 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
            ],
          ),
        );
+    }
+
+    final heroMed = nextMed;
+    final heroTime = earliestTime;
+    final heroSlot = nextSlot;
+    if (heroTime == null || heroSlot == null) {
+      return const SizedBox.shrink();
     }
 
     return Container(
@@ -1339,7 +1372,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                       style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                     ),
                     Text(
-                      nextMed.dosage,
+                      nextMed.getCurrentDosage(DateTime.now()),
                       style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14),
                     ),
                   ],
@@ -1364,9 +1397,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
             children: [
               Expanded(
                 child: ElevatedButton(
-                  onPressed: () {
-                    AppSnackBar.showSuccess(context, "Marked as taken");
-                  },
+                  onPressed: () => _markMedicineTakenFromHero(heroMed, heroTime, heroSlot),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,
                     foregroundColor: AppTheme.cyanAccent,
@@ -1399,9 +1430,9 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppTheme.cyanAccent.withOpacity(0.05),
+        color: AppTheme.cyanAccent.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.cyanAccent.withOpacity(0.2)),
+        border: Border.all(color: AppTheme.cyanAccent.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1506,7 +1537,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
             icon: LucideIcons.packageSearch,
             color: isCritical ? Colors.red : Colors.orange,
             ctaText: "Refill Now",
-            onTapCta: () => _showRefillDialog(med),
+            onTapCta: () => _showRefillCenter(),
           ),
         );
       }
@@ -1542,7 +1573,10 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
             children: [
               const Text("Attention Needed", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
               if (attentionItems.length > 3)
-                Text("View All (${attentionItems.length})", style: TextStyle(color: AppTheme.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                TextButton(
+                  onPressed: _showRefillCenter,
+                  child: const Text("View All", style: TextStyle(color: AppTheme.cyanAccent, fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
             ],
           ),
         ),
@@ -1623,6 +1657,15 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
   }
 
   Widget _buildGroupedSlotView(List<Medicine> medications) {
+    // Check family permissions
+    final membershipAsync = ref.watch(familyMembershipProvider);
+    bool canEditMeds = true;
+    if (membershipAsync is AsyncData && membershipAsync.value != null) {
+      final m = membershipAsync.value!;
+      final role = m['role'];
+      canEditMeds = (role == 'admin') || (m['can_edit_meds'] == true);
+    }
+
     List<Medicine> activeMeds = medications.where((m) => m.isActive).toList();
     List<Medicine> inactiveMeds = medications.where((m) => !m.isActive).toList();
     
@@ -1650,6 +1693,13 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
 
     final slotOrder = ['morning', 'afternoon', 'evening', 'night', 'custom'];
 
+    if (activeMeds.isEmpty && inactiveMeds.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 40, bottom: 80),
+        child: _buildFilterEmptyState(),
+      );
+    }
+
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -1663,7 +1713,10 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
 
         if (i < nonEmptySlots.length) {
           final slot = nonEmptySlots[i];
-          return _buildSlotCard(slot, groups[slot]!);
+          return _buildSlotCard(slot, groups[slot]!, canEditMeds)
+              .animate()
+              .fade(duration: 400.ms, delay: (i * 100).ms)
+              .slideY(begin: 0.1, duration: 400.ms, curve: Curves.easeOut);
         }
 
         // Inactive section
@@ -1689,7 +1742,12 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                   ],
                 ),
               ),
-              ...inactiveMeds.map((m) => _buildInactiveMedicineCard(m)),
+              ...inactiveMeds.asMap().entries.map((entry) {
+                return _buildInactiveMedicineCard(entry.value, canEditMeds)
+                    .animate()
+                    .fade(duration: 400.ms, delay: ((nonEmptySlots.length + entry.key) * 100).ms)
+                    .slideY(begin: 0.1, duration: 400.ms, curve: Curves.easeOut);
+              }),
             ],
           );
         }
@@ -1698,7 +1756,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     );
   }
 
-  Widget _buildSlotCard(String slot, List<Medicine> meds) {
+  Widget _buildSlotCard(String slot, List<Medicine> meds, bool canEdit) {
     final slotConfig = _slotCardConfig(slot);
     final isExpanded = _expandedSlots.contains(slot);
     final timeRange = _slotTimeRange(slot);
@@ -1735,9 +1793,13 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                       children: [
                         Row(
                           children: [
-                            Text(
-                              slotConfig['label'],
-                              style: Theme.of(context).textTheme.titleLarge,
+                            Expanded(
+                              child: Text(
+                                slotConfig['label'],
+                                style: Theme.of(context).textTheme.titleLarge,
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
                             ),
                             const SizedBox(width: 8),
                             Container(
@@ -1790,7 +1852,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child:
-                        _buildMedicineCard(med, isPrimarySlot: isPrimarySlot),
+                        _buildMedicineCard(med, isPrimarySlot: isPrimarySlot, canEdit: canEdit),
                   );
                 }).toList(),
               ),
@@ -1834,7 +1896,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
       case 'custom':
         return {
           'icon': LucideIcons.clock,
-          'label': 'Custom',
+          'label': 'As Needed (PRN) / Custom',
           'color': AppTheme.textSecondary
         };
       default:
@@ -1883,23 +1945,24 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
     }
   }
 
-  Widget _buildMedicineCard(Medicine med, {bool isPrimarySlot = true}) {
+  Widget _buildMedicineCard(Medicine med, {bool isPrimarySlot = true, bool canEdit = true}) {
     return MedicineCard(
       med: med,
+      canEdit: canEdit,
       isExpanded: _expandedMedId == med.id,
       onDelete: () => _deleteMedication(med),
       onToggleExpand: () => setState(
           () => _expandedMedId = _expandedMedId == med.id ? null : med.id),
-      onShowOptions: () => _showMedicineOptions(med),
-      onRefill: () => _showRefillDialog(med),
+      onShowOptions: () => _showMedicineOptions(med, canEdit),
+      onRefill: () => _showRefillCenter(),
       onUpdateQty: (delta) => _updateQty(med, delta),
       slotPrefs: _slotPrefs,
     );
   }
 
-  Widget _buildInactiveMedicineCard(Medicine med) {
+  Widget _buildInactiveMedicineCard(Medicine med, bool canEdit) {
     return GestureDetector(
-      onTap: () => _showRefillDialog(med),
+      onTap: canEdit ? () => _showRefillCenter() : null,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
@@ -1976,12 +2039,12 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(32),
             decoration:
                 BoxDecoration(color: AppTheme.cyanAccent.withValues(alpha: 0.1), shape: BoxShape.circle),
-            child: const Icon(LucideIcons.pill,
-                size: 60, color: AppTheme.cyanAccent),
-          ).animate(onPlay: (controller) => controller.repeat(reverse: true)).scaleXY(end: 1.1, duration: 2.seconds),
+            child: const Icon(LucideIcons.packageOpen,
+                size: 80, color: AppTheme.cyanAccent),
+          ).animate(onPlay: (controller) => controller.repeat(reverse: true)).scaleXY(end: 1.05, duration: 2.seconds),
           const SizedBox(height: 32),
           Text("No medications yet",
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
@@ -1990,8 +2053,60 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
               "Keep track of your family's health\nby adding their medications here.",
               textAlign: TextAlign.center,
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 16)),
+          const SizedBox(height: 32),
+          ElevatedButton.icon(
+            onPressed: () => _showAddEditDialog(),
+            icon: const Icon(LucideIcons.plus, size: 20),
+            label: const Text("Add First Medicine"),
+          ).animate().slideY(begin: 0.5, duration: 500.ms).fade(),
         ],
       ).animate().fade(duration: 500.ms).slideY(begin: 0.2),
+    );
+  }
+
+  Widget _buildFilterEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(LucideIcons.searchX, size: 60, color: Colors.grey[400]),
+          const SizedBox(height: 24),
+          Text("No matches found",
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const Text(
+              "Try adjusting your search or filter.",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 15)),
+          const SizedBox(height: 24),
+          TextButton(
+            onPressed: () => setState(() {
+              _searchQuery = '';
+              _selectedFilter = 'All';
+            }),
+            child: const Text("Clear Filters", style: TextStyle(color: AppTheme.cyanAccent)),
+          ),
+        ],
+      ).animate().fade(duration: 300.ms).slideY(begin: 0.1),
+    );
+  }
+
+  Widget _buildSkeletonLoader() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: 5,
+      itemBuilder: (context, index) {
+        return Container(
+          height: 120,
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(20),
+          ),
+        )
+        .animate(onPlay: (controller) => controller.repeat(reverse: true))
+        .fade(begin: 0.5, end: 1.0, duration: 1.seconds);
+      },
     );
   }
 
@@ -2143,7 +2258,7 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-                color: const Color(0xFF0EA5E9).withOpacity(0.1),
+                color: const Color(0xFF0EA5E9).withValues(alpha: 0.1),
                 shape: BoxShape.circle),
             child: Icon(icon, color: const Color(0xFF0EA5E9), size: 30),
           ),

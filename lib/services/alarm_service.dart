@@ -8,32 +8,19 @@ import 'package:alarm/alarm.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class AlarmService {
-  // Singleton pattern
   static final AlarmService instance = AlarmService._internal();
   factory AlarmService() => instance;
   AlarmService._internal();
 
-  /// Offset added to an alarm's original ID to create its snooze ID.
-  /// Any alarm with id > kSnoozeOffset is a snooze.
   static const int kSnoozeOffset = 900000;
 
   final FlutterLocalNotificationsPlugin notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
   Future<void> init() async {
-    // Alarm.init() already called in main.dart — don't call again here
     tz.initializeTimeZones();
-
-    // ringStream listener is already set up in main.dart (early listener)
-    // Don't subscribe again — it's a single-subscription stream
-
-    // Request permissions
     await _requestPermissions();
 
-    // Note: notificationsPlugin.initialize() is called in main.dart
-    // with the action button callback — don't initialize here
-
-    // Log active alarms
     final alarms = await Alarm.getAlarms();
     debugPrint("Active alarms on startup: ${alarms.length}");
     for (final a in alarms) {
@@ -62,15 +49,16 @@ class AlarmService {
     return prefs.getBool('alarm_style_fullscreen') ?? true;
   }
 
-  /// Schedules a real device alarm that rings even when app is closed.
-  /// Returns true if alarm was successfully set, false otherwise.
   Future<bool> scheduleAlarm({
     required int id,
+    required String medicationId,
     required String medicineName,
     required String dosage,
-    required String imagePath,
+    required int qty,
+    required String? imagePath,
     required DateTime time,
-    int qty = 0,
+    required int slotIndex,
+    String? slotKey,
   }) async {
     final useFullScreenIntent = await _shouldUseFullScreenIntent();
     final alarmSettings = AlarmSettings(
@@ -82,19 +70,18 @@ class AlarmService {
       volumeSettings: VolumeSettings.fade(
         volume: 1.0,
         volumeEnforced: true,
-        fadeDuration: Duration(seconds: 3),
+        fadeDuration: const Duration(seconds: 3),
       ),
       notificationSettings: NotificationSettings(
         title: medicineName,
         body: dosage,
-        stopButton: null,  // Removes Dismiss button completely
+        stopButton: null,
       ),
       warningNotificationOnKill: true,
       androidFullScreenIntent: useFullScreenIntent,
     );
 
     final success = await Alarm.set(alarmSettings: alarmSettings);
-    debugPrint("Alarm.set() returned: $success for ID=$id at $time ($medicineName)");
 
     if (!success) {
       debugPrint("WARNING: Alarm.set() returned false for ID=$id. Falling back to local notification.");
@@ -106,32 +93,36 @@ class AlarmService {
       );
     }
 
-    // Save medicine data for instant alarm screen — no DB needed
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('cached_med_$id', jsonEncode({
-        'id': '',
-        'name': medicineName,
+        'alarm_id': id,
+        'original_alarm_id': id,
+        'type': 'single',
+        'medication_id': medicationId,
+        'medicine_name': medicineName,
         'dosage': dosage,
         'qty': qty,
         'image_path': imagePath,
+        'scheduled_time': time.toIso8601String(),
+        'slot_index': slotIndex,
+        'slot_key': slotKey,
+        'is_snooze': false,
+        'mode': useFullScreenIntent ? 'fullscreen' : 'notification',
       }));
     } catch (e) {
       debugPrint("Error caching alarm med data: $e");
     }
 
-    debugPrint("Alarm set: ID=$id at $time for $medicineName");
-    return true;
+    // C11: Return actual result — true if alarm was set, false if we fell back to local notification
+    return success;
   }
 
-  /// Cancels a single alarm
   Future<void> cancelAlarm(int id) async {
     await Alarm.stop(id);
     await notificationsPlugin.cancel(id);
-    debugPrint("Alarm cancelled: ID=$id");
   }
 
-  /// Cancels multiple alarms
   Future<void> cancelAlarmsForMedicine(List<int?> alarmIds) async {
     for (final id in alarmIds) {
       if (id != null) {
@@ -141,22 +132,19 @@ class AlarmService {
     }
   }
 
-  /// Schedules a snooze alarm
-  Future<DateTime> scheduleSnoozeAlarm({
+  Future<int?> scheduleSnoozeAlarm({
     required int originalId,
     required String medicineName,
     required DateTime originalTime,
     int snoozeDurationMinutes = 30,
   }) async {
     final useFullScreenIntent = await _shouldUseFullScreenIntent();
-    final fromOriginal = originalTime.add(Duration(minutes: snoozeDurationMinutes));
-    final fromNow = DateTime.now().add(const Duration(minutes: 5));
-    final snoozeTime =
-        fromOriginal.isAfter(fromNow) ? fromOriginal : fromNow;
+    final fromNow = DateTime.now().add(Duration(minutes: snoozeDurationMinutes));
+    final snoozeTime = fromNow;
 
     final snoozeId = originalId + kSnoozeOffset;
 
-    await Alarm.set(
+    final success = await Alarm.set(
       alarmSettings: AlarmSettings(
         id: snoozeId,
         dateTime: snoozeTime,
@@ -166,44 +154,43 @@ class AlarmService {
         volumeSettings: VolumeSettings.fade(
           volume: 1.0,
           volumeEnforced: true,
-          fadeDuration: Duration(seconds: 3),
+          fadeDuration: const Duration(seconds: 3),
         ),
-        notificationSettings: const NotificationSettings(
-          title: '',
-          body: '',
+        notificationSettings: NotificationSettings(
+          title: medicineName,
+          body: 'Snoozed Reminder',
           stopButton: null,
         ),
         warningNotificationOnKill: true,
         androidFullScreenIntent: useFullScreenIntent,
       ),
     );
+    if (!success) return null;
 
-    // Cache snooze data for instant AlarmScreen
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('cached_med_$snoozeId', jsonEncode({
-        'id': '',
-        'name': medicineName,
-        'dosage': 'Snooze',
-        'qty': 0,
-        'image_path': '',
-      }));
+      final originalCache = prefs.getString('cached_med_$originalId');
+      if (originalCache != null) {
+        final Map<String, dynamic> data = jsonDecode(originalCache);
+        data['alarm_id'] = snoozeId;
+        data['is_snooze'] = true;
+        // MUST keep original scheduled_time intact
+        await prefs.setString('cached_med_$snoozeId', jsonEncode(data));
+      }
     } catch (e) {
       debugPrint("Error caching snooze med data: $e");
     }
 
-    debugPrint("Snooze alarm set: ID=$snoozeId at $snoozeTime");
-    return snoozeTime;
+    return snoozeId;
   }
 
-  /// Schedules one alarm for an entire slot group of medicines.
-  /// Returns the alarm ID, or null if scheduling failed.
   Future<int?> scheduleGroupSlotAlarm({
     required String slot,
     required String slotKey,
     required DateTime alarmTime,
+    required List<String> medicationIds,
     required List<String> medicineNames,
-    required String medicationIdsJson,
+    required List<String> dosages,
   }) async {
     final useFullScreenIntent = await _shouldUseFullScreenIntent();
     final alarmId = generateSlotAlarmId(slotKey);
@@ -211,8 +198,7 @@ class AlarmService {
     final title = _slotDisplayName(slotKey.split('_')[0]);
     final body = medicineNames.length == 1
         ? medicineNames.first
-        : '${medicineNames.take(3).join(', ')}'
-            '${medicineNames.length > 3 ? ' +${medicineNames.length - 3} more' : ''}';
+        : '${medicineNames.take(3).join(', ')}${medicineNames.length > 3 ? ' +${medicineNames.length - 3} more' : ''}';
 
     final success = await Alarm.set(
       alarmSettings: AlarmSettings(
@@ -226,9 +212,9 @@ class AlarmService {
           volumeEnforced: true,
           fadeDuration: const Duration(seconds: 3),
         ),
-        notificationSettings: const NotificationSettings(
-          title: '',
-          body: '',
+        notificationSettings: NotificationSettings(
+          title: title,
+          body: body,
           stopButton: null,
         ),
         warningNotificationOnKill: true,
@@ -240,26 +226,31 @@ class AlarmService {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('group_alarm_$alarmId', jsonEncode({
-      'slot': slot,
+      'alarm_id': alarmId,
+      'original_alarm_id': alarmId,
+      'type': 'group',
       'slot_key': slotKey,
-      'alarm_time': alarmTime.toIso8601String(),
+      'slot_label': slot,
+      'scheduled_time': alarmTime.toIso8601String(),
+      'medication_ids': medicationIds,
       'medicine_names': medicineNames,
-      'medication_ids': jsonDecode(medicationIdsJson),
+      'dosages': dosages,
       'is_retry': false,
+      'mode': useFullScreenIntent ? 'fullscreen' : 'notification',
     }));
     await prefs.setInt('active_group_alarm_$slotKey', alarmId);
 
-    debugPrint('Group alarm set: ID=$alarmId slot=$slotKey at $alarmTime');
     return alarmId;
   }
 
-  /// Schedules a retry alarm for remaining unticked medicines in a slot.
   Future<int?> scheduleRetryAlarm({
     required String slot,
     required String slotKey,
     required DateTime retryTime,
+    required DateTime originalScheduledTime,
+    required List<String> remainingMedicationIds,
     required List<String> remainingMedicineNames,
-    required String remainingMedicationIdsJson,
+    required List<String> remainingDosages,
   }) async {
     final useFullScreenIntent = await _shouldUseFullScreenIntent();
     final alarmId = generateSlotAlarmId(slotKey, isRetry: true);
@@ -281,9 +272,9 @@ class AlarmService {
           volumeEnforced: true,
           fadeDuration: const Duration(seconds: 3),
         ),
-        notificationSettings: const NotificationSettings(
-          title: '',
-          body: '',
+        notificationSettings: NotificationSettings(
+          title: title,
+          body: body,
           stopButton: null,
         ),
         warningNotificationOnKill: true,
@@ -295,20 +286,23 @@ class AlarmService {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('group_alarm_$alarmId', jsonEncode({
-      'slot': slot,
+      'alarm_id': alarmId,
+      'original_alarm_id': generateSlotAlarmId(slotKey),
+      'type': 'group',
       'slot_key': slotKey,
-      'alarm_time': retryTime.toIso8601String(),
+      'slot_label': slot,
+      'scheduled_time': originalScheduledTime.toIso8601String(),
+      'medication_ids': remainingMedicationIds,
       'medicine_names': remainingMedicineNames,
-      'medication_ids': jsonDecode(remainingMedicationIdsJson),
+      'dosages': remainingDosages,
       'is_retry': true,
+      'mode': useFullScreenIntent ? 'fullscreen' : 'notification',
     }));
     await prefs.setInt('active_retry_alarm_$slotKey', alarmId);
 
-    debugPrint('Retry alarm set: ID=$alarmId slot=$slotKey at $retryTime');
     return alarmId;
   }
 
-  /// Cancels the active group alarm and retry alarm for a slot key.
   Future<void> cancelSlotAlarms(String slotKey) async {
     final prefs = await SharedPreferences.getInstance();
     final groupId = prefs.getInt('active_group_alarm_$slotKey') ?? generateSlotAlarmId(slotKey);
@@ -325,8 +319,6 @@ class AlarmService {
     await prefs.remove('group_alarm_$retryId');
   }
 
-  /// Generates a unique, deterministic alarm ID using the slotKey.
-  /// Avoids hashCode collisions and unbounded counter growth.
   static int generateSlotAlarmId(String slotKey, {bool isRetry = false}) {
     final hash = slotKey.hashCode.abs();
     final base = (hash % 400000) + 10000;
@@ -348,21 +340,13 @@ class AlarmService {
     }
   }
 
- 
-
-  /// Show notification with action buttons for notification-only mode
   Future<void> showActionNotification({
     required int alarmId,
     required String medicineName,
     required String dosage,
     required DateTime scheduledTime,
   }) async {
-    // Store scheduledTime for snooze calculation (read back in _handleNotificationTakeLater)
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('alarm_scheduled_time_$alarmId', scheduledTime.toIso8601String());
-    } catch (_) {}
-    final androidDetails = AndroidNotificationDetails(
+    final androidDetails = const AndroidNotificationDetails(
       'alarm_actions_channel',
       'Alarm Actions',
       channelDescription: 'Medicine alarm with action buttons',
@@ -373,26 +357,34 @@ class AlarmService {
       autoCancel: false,
       category: AndroidNotificationCategory.alarm,
       visibility: NotificationVisibility.public,
-      playSound: false, // alarm sound already playing from native side
+      playSound: false,
       actions: <AndroidNotificationAction>[
+        // C1: showsUserInterface: true — brings the app to foreground so Supabase
+        // is already initialized in the main isolate. Without this, actions run in
+        // a background isolate where Supabase init silently fails.
         AndroidNotificationAction(
-          'took_it_$alarmId',
+          'took_it',
           'I Took It',
           cancelNotification: true,
-          showsUserInterface: false,
+          showsUserInterface: true,
         ),
         AndroidNotificationAction(
-          'snooze_$alarmId',
+          'snooze',
           'Snooze 30 Min',
           cancelNotification: true,
-          showsUserInterface: false,
+          showsUserInterface: true,
+        ),
+        AndroidNotificationAction(
+          'skip',
+          'Skip Dose',
+          cancelNotification: true,
+          showsUserInterface: true,
         ),
       ],
     );
 
     final details = NotificationDetails(android: androidDetails);
 
-    // Use SAME ID as alarm package — our notification replaces theirs
     await notificationsPlugin.show(
       alarmId,
       'Medicine Reminder',
@@ -402,29 +394,37 @@ class AlarmService {
     );
   }
 
-  /// Cleans up shared preferences for alarms that no longer exist
   Future<void> cleanupOrphanedPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     final alarms = await Alarm.getAlarms();
     final activeIds = alarms.map((a) => a.id).toSet();
+    final pendingAutoStopIds = prefs
+        .getKeys()
+        .where((key) => key.startsWith('auto_stop_expiry_'))
+        .map((key) => int.tryParse(key.replaceFirst('auto_stop_expiry_', '')))
+        .whereType<int>()
+        .toSet();
     
     final keys = prefs.getKeys().toList();
     for (final key in keys) {
       if (key.startsWith('cached_med_')) {
         final idStr = key.replaceFirst('cached_med_', '');
         final id = int.tryParse(idStr);
-        if (id != null && !activeIds.contains(id)) {
+        if (id != null &&
+            !activeIds.contains(id) &&
+            !pendingAutoStopIds.contains(id)) {
           await prefs.remove(key);
         }
       } else if (key.startsWith('group_alarm_')) {
         final idStr = key.replaceFirst('group_alarm_', '');
         final id = int.tryParse(idStr);
-        if (id != null && !activeIds.contains(id)) {
+        if (id != null &&
+            !activeIds.contains(id) &&
+            !pendingAutoStopIds.contains(id)) {
           await prefs.remove(key);
         }
       }
     }
-    debugPrint('cleanupOrphanedPrefs finished.');
   }
 
   Future<void> _fallbackToLocalNotification({
@@ -456,8 +456,10 @@ class AlarmService {
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
       );
-    } catch (e) {
-      debugPrint("Exact schedule failed, falling back to inexact: $e");
+      debugPrint("Fallback notification scheduled (exact) for ID=$id at $time");
+    } catch (e1) {
+      // C12: Log the first failure, don't silently swallow it
+      debugPrint("WARNING: Exact fallback notification failed for ID=$id: $e1 — trying inexact");
       try {
         await notificationsPlugin.zonedSchedule(
           id,
@@ -468,15 +470,14 @@ class AlarmService {
           androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
         );
+        debugPrint("Fallback notification scheduled (inexact) for ID=$id at $time");
       } catch (e2) {
-         debugPrint("Inexact schedule also failed: $e2");
+        // C12: Both attempts failed — log clearly so it can be diagnosed
+        debugPrint("ERROR: Both fallback notification attempts failed for ID=$id. Exact: $e1, Inexact: $e2");
       }
     }
   }
 
-  /// 9A — Schedules a daily summary notification at 10:00 PM.
-  /// Call this from _initDashboard() with today's summary content.
-  /// Uses zonedSchedule with matchDateTimeComponents for daily repeat.
   Future<void> scheduleDailySummary({
     required int taken,
     required int total,
@@ -508,19 +509,15 @@ class AlarmService {
       const details = NotificationDetails(android: androidDetails);
 
       await notificationsPlugin.zonedSchedule(
-        999999, // Fixed ID for daily summary
+        999999,
         'Daily Medicine Summary',
         body,
         tz.TZDateTime.from(summaryTime, tz.local),
         details,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-        matchDateTimeComponents: DateTimeComponents.time, // Repeat daily at same time
+        matchDateTimeComponents: DateTimeComponents.time,
       );
-
-      debugPrint('Daily summary scheduled for $summaryTime: $body');
-    } catch (e) {
-      debugPrint('scheduleDailySummary error: $e');
-    }
+    } catch (_) {}
   }
 }

@@ -21,24 +21,28 @@ This document reflects the features currently present in the codebase.
 
 ## 4. Meds & Reminders
 - **Medication Management:** View, filter, group, add, edit, and manage medicines (`meds_screen.dart`, `add_medicine_wizard.dart`).
-- **Medicine Logs:** Track taken, skipped, missed, snoozed, and recent activity (`medicine_log_screen.dart`).
+- **Medicine Logs & Insights:** Comprehensive analytics dashboard displaying a 7-day adherence score, weekly bar charts (`fl_chart`), chronological activity tracking, and a 1-click shareable adherence report for doctors via native OS share sheet (`share_plus`) (`medicine_log_screen.dart`).
 - **Slot Scheduling:** Morning, afternoon, evening, night, and custom time slots.
-- **Alarm System:** Exact alarms, full-screen alarm UI, notification-only mode, snooze, retries, auto-stop, boot restore, and group slot alarms (`main.dart`, `alarm_screen.dart`, `group_alarm_screen.dart`, `alarm_service.dart`).
-- **Low Stock & Refill Awareness:** Qty tracking and low-stock alerts.
+- **Alarm System:** Exact alarms, full-screen alarm UI, notification-only mode, snooze, retries, auto-stop, boot restore, group slot alarms, and **Custom Ringtones** (`main.dart`, `alarm_screen.dart`, `alarm_service.dart`).
+- **Alarm Action Engine:** Advanced duplicate protection and locking mechanism to prevent double-logging and double-deductions during rapid tap events.
+- **Refill Center:** Dedicated UI for inventory management with low-stock sorting, dynamic days-left estimation, and 1-tap quick-add buttons (+10, +30).
+- **Low Stock Safety Alerts:** Background watchdog tracking quantity deductions; triggers local push notifications and caregiver WhatsApp alerts when stock drops below threshold.
 - **Prescription Intake:** AI scan, OCR extraction, manual add, review list, and background DB save (`prescription_screen.dart`, `ocr_service.dart`, `prescription_service.dart`).
+- **UI Polish & Empty States:** Animated shimmer skeleton loaders, staggered micro-animations for list rendering, and contextual animated empty states (True Empty vs Filter Empty) via `flutter_animate`.
 
 ## 5. Health
-- **Health Landing:** Entry point to dashboard, vitals, appointments, and records (`health_landing_screen.dart`).
-- **Health Dashboard:** Active meds snapshot, low-stock snapshot, latest vitals (`health_dashboard_screen.dart`).
-- **Vitals Tracking:** Add readings, latest summary, history, and heart-rate trend chart (`vitals_screen.dart`, `vitals_input_sheet.dart`, `vitals_service.dart`).
-- **Appointments:** Create, list, delete, and optionally remind upcoming doctor visits (`appointment_screen.dart`).
-- **Medical Records / Vault:** Upload and view prescription images and reports (`vault_screen.dart`).
-- **Medical History Logging:** History entries for key actions (`history_service.dart`).
+- **Health Hub (New Architecture):** Centralized dashboard utilizing `IndexedStack` and a modern bottom navigation bar for quick access to Overview, Symptoms, Records, and Reports (`health_hub_screen.dart`).
+- **Overview Dashboard:** Active meds snapshot, next appointment, and latest vitals summary (`overview_screen.dart`).
+- **Symptoms Tracking:** Securely log pain levels, triggers, duration, and rich notes. Tracks severity out of 5 with dynamic color coding (`symptoms_screen.dart`, `symptom_entry_sheet.dart`).
+- **Medical Records Vault:** Categorized document vault (Prescriptions, Lab Reports, Imaging, etc.) hooked directly to Supabase Storage with secure signed URLs and full-screen image viewing (`records_screen.dart`).
+- **Appointments Pro:** Dynamic upcoming/past tabs, detailed visit notes, specialty tracking, and "Mark as Completed" workflow with local alarm cancellations (`appointment_screen.dart`, `appointment_detail_screen.dart`).
+- **Health Reports Engine:** Generates comprehensive PDF summaries combining active medications, recent vitals, and symptoms. Includes live HTML preview and native share/print capabilities via `pdf` and `printing` packages (`reports_screen.dart`, `report_preview_screen.dart`).
+- **Vitals Tracking:** Add readings (BP, HR, SpO2, Weight, Temp), latest summary, history, and interactive heart-rate trend chart (`vitals_screen.dart`, `vitals_input_sheet.dart`, `vitals_service.dart`).
 
 ## 6. Family & Care Coordination
 - **Family Groups:** Create family, join by invite code, manage members (`family_hub_screen.dart`).
-- **Roles & Access:** Admin/member roles, approvals, promotion, and removal.
-- **Shared Monitoring:** Open another member's health dashboard, vitals, appointments, and records.
+- **Granular Permissions & RLS:** Deep Row Level Security (RLS) enforcement ensuring family members can only read health data (Vitals, Records, Appointments, Symptoms) if explicitly approved by the owner (`family_hub_foundation.sql`, `health_family_rls_policies.sql`).
+- **Read-Only Shared UI:** Automatically hides floating action buttons, edit features, and swipe-to-delete gestures when viewing another family member's health profiles (`isViewingOther` logic across all health screens).
 - **Activity Feed:** Family updates grouped by date (`activity_feed_screen.dart`, `activity_service.dart`).
 - **Caregiver Alerts:** WhatsApp alerts for missed doses, slot reminders, and low-stock events (`notification_service.dart`).
 

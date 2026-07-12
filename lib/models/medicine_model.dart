@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:intl/intl.dart';
 
 import 'medicine_entity.dart';
@@ -29,6 +30,7 @@ class Medicine {
   final String scheduleType;        // 'daily' | 'every_x_days' | 'specific_dates'
   final int everyXDays;             // Default 1
   final List<String> specificDates; // ['2026-05-20', '2026-05-22']
+  final List<Map<String, dynamic>> taperSteps; // [{'duration_days': 3, 'dosage': '10mg'}]
   final String notes;               // Doctor instructions
   final bool isPaused;
   final bool lowStockAlerted;              // Pause feature
@@ -69,6 +71,7 @@ class Medicine {
     this.scheduleType = 'daily',
     this.everyXDays = 1,
     this.specificDates = const [],
+    this.taperSteps = const [],
     this.notes = '',
     this.isPaused = false,
     this.lowStockAlerted = false,
@@ -108,6 +111,7 @@ class Medicine {
     String? scheduleType,
     int? everyXDays,
     List<String>? specificDates,
+    List<Map<String, dynamic>>? taperSteps,
     String? notes,
     bool? isPaused,
     bool? lowStockAlerted,
@@ -146,6 +150,7 @@ class Medicine {
       scheduleType: scheduleType ?? this.scheduleType,
       everyXDays: everyXDays ?? this.everyXDays,
       specificDates: specificDates ?? this.specificDates,
+      taperSteps: taperSteps ?? this.taperSteps,
       notes: notes ?? this.notes,
       isPaused: isPaused ?? this.isPaused,
       lowStockAlerted: lowStockAlerted ?? this.lowStockAlerted,
@@ -180,6 +185,30 @@ class Medicine {
     return times;
   }
 
+  String getCurrentDosage(DateTime targetDate) {
+    if (scheduleType != 'tapered' || taperSteps.isEmpty) {
+      return dosage;
+    }
+    
+    final start = DateTime(startDate.year, startDate.month, startDate.day);
+    final target = DateTime(targetDate.year, targetDate.month, targetDate.day);
+    
+    if (target.isBefore(start)) return dosage;
+
+    int daysPassed = target.difference(start).inDays;
+    int accumulatedDays = 0;
+    
+    for (final step in taperSteps) {
+      final stepDuration = step['duration_days'] as int? ?? 1;
+      accumulatedDays += stepDuration;
+      if (daysPassed < accumulatedDays) {
+        return step['dosage']?.toString() ?? dosage;
+      }
+    }
+    
+    return taperSteps.last['dosage']?.toString() ?? dosage;
+  }
+
   MedicineEntity toEntity() {
     return MedicineEntity()
       ..supabaseId = id
@@ -206,6 +235,7 @@ class Medicine {
       ..scheduleType = scheduleType
       ..everyXDays = everyXDays
       ..specificDates = specificDates
+      ..taperStepsJson = jsonEncode(taperSteps)
       ..notes = notes
       ..isPaused = isPaused
       ..lowStockAlerted = lowStockAlerted
@@ -246,6 +276,7 @@ class Medicine {
       scheduleType: entity.scheduleType,
       everyXDays: entity.everyXDays,
       specificDates: entity.specificDates,
+      taperSteps: _parseTaperSteps(entity.taperStepsJson),
       notes: entity.notes,
       isPaused: entity.isPaused,
       lowStockAlerted: entity.lowStockAlerted,
@@ -263,6 +294,16 @@ class Medicine {
 
   // returns frequency as the dose count per day
   int get dailyDose => frequency;
+
+  static List<Map<String, dynamic>> _parseTaperSteps(String? jsonString) {
+    if (jsonString == null || jsonString.isEmpty) return [];
+    try {
+      final parsed = jsonDecode(jsonString) as List;
+      return parsed.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
 
   factory Medicine.fromJson(Map<String, dynamic> json) {
     try {
@@ -295,6 +336,7 @@ class Medicine {
         scheduleType: json['schedule_type']?.toString() ?? 'daily',
         everyXDays: int.tryParse(json['every_x_days']?.toString() ?? '1') ?? 1,
         specificDates: List<String>.from(json['specific_dates'] ?? []),
+        taperSteps: json['taper_steps'] != null ? List<Map<String, dynamic>>.from((json['taper_steps'] as List).map((e) => Map<String, dynamic>.from(e))) : [],
         notes: json['notes']?.toString() ?? '',
         isPaused: json['is_paused'] == true || json['is_paused'] == 1,
         lowStockAlerted: json['low_stock_alerted'] == true || json['low_stock_alerted'] == 1,
@@ -351,6 +393,7 @@ class Medicine {
       'schedule_type': scheduleType,
       'every_x_days': everyXDays,
       'specific_dates': specificDates,
+      'taper_steps': taperSteps,
       'notes': notes,
       'is_paused': isPaused,
       'low_stock_alerted': lowStockAlerted,
@@ -368,7 +411,7 @@ class Medicine {
 
   /// Returns true if medicine should be active on given date
   bool isActiveOnDate(DateTime date) {
-    if (isPaused || qty <= 0) return false;
+    if (isPaused || qty <= 0 || isAsNeeded) return false;
     if (scheduleType == 'specific_dates') {
       final dateStr = DateFormat('yyyy-MM-dd').format(date);
       return specificDates.contains(dateStr);

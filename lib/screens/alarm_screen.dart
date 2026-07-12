@@ -2,38 +2,20 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:alarm/alarm.dart';
-import '../services/alarm_service.dart';
-import '../services/notification_service.dart';
-import '../services/activity_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/alarm_action_engine.dart';
+import '../services/alarm_context_resolver.dart';
+import '../models/alarm_context.dart';
 import '../utils/snackbar_utils.dart';
-import '../main.dart' show activeAlarmIdNotifier, kSnoozeOffset;
+import '../main.dart' show activeAlarmIdNotifier;
 
 class AlarmScreen extends StatefulWidget {
   final int alarmId;
-  final bool isSnooze; // ✅ Add this flag
-  final String medicineName;
-  final String? imagePath;
-  final String dosage;
-  final int qty;
-  final String medicationId;
-  final int alarmSlot;
-  final DateTime scheduledTime;
 
   const AlarmScreen({
     super.key,
     required this.alarmId,
-    this.isSnooze = false, // ✅ Default to false
-    required this.medicineName,
-    this.imagePath,
-    required this.dosage,
-    required this.qty,
-    required this.medicationId,
-    required this.alarmSlot,
-    required this.scheduledTime,
   });
 
   @override
@@ -41,18 +23,16 @@ class AlarmScreen extends StatefulWidget {
 }
 
 class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStateMixin {
-  final _supabase = Supabase.instance.client;
-  final _alarmService = AlarmService();
   Timer? _autoDismissTimer;
-  bool _isActionTaken = false;
   bool _isProcessing = false;
   late AnimationController _bellController;
   late Animation<double> _bellAnimation;
+  AlarmContext? _context;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    // Bell ringing animation
     _bellController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
@@ -60,8 +40,24 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
     _bellAnimation = Tween<double>(begin: -0.15, end: 0.15).animate(
       CurvedAnimation(parent: _bellController, curve: Curves.easeInOut),
     );
-    _startAutoDismissTimer();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+    _loadContext();
+  }
+
+  Future<void> _loadContext() async {
+    final ctx = await AlarmContextResolver.instance.resolveAlarmContext(widget.alarmId);
+    if (mounted) {
+      if (ctx == null) {
+        _dismissScreen();
+      } else {
+        setState(() {
+          _context = ctx;
+          _isLoading = false;
+        });
+        _startAutoDismissTimer();
+      }
+    }
   }
 
   @override
@@ -69,521 +65,407 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
     _bellController.dispose();
     _autoDismissTimer?.cancel();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
-    // ✅ Reset alarm notifier so app doesn't stay in "alarm mode"
     activeAlarmIdNotifier.value = null;
-
     super.dispose();
   }
 
   void _startAutoDismissTimer() {
-    // Auto-dismiss after 30 minutes if no interaction
-    _autoDismissTimer = Timer(const Duration(minutes: 30), () {
-      _handleMissedDose();
-    });
-  }
+    SharedPreferences.getInstance().then((prefs) {
+      if (!mounted) return;
+      final expiryStr = prefs.getString('auto_stop_expiry_${widget.alarmId}');
+      final expiry = expiryStr != null ? DateTime.tryParse(expiryStr) : null;
+      final remaining = expiry?.difference(DateTime.now());
 
-  Future<void> _handleMissedDose({bool explicitSkip = false}) async {
-    if (_isActionTaken) return; // ✅ Double execution rokna
-    _isActionTaken = true;
-    
-    try {
-      await Alarm.stop(widget.alarmId);
-      await _logDoseStatus(explicitSkip ? 'skipped' : 'missed');
-      
-      // ✅ WhatsApp Notification Logic (Only for missed, not for intentionally skipped unless requested)
-      if (!explicitSkip) {
-        await _informFamilyOfMissedDose();
-      }
-      
-      try {
-        await ActivityService.log(
-          actionType: explicitSkip ? 'MEDICINE_SKIPPED' : 'MEDICINE_MISSED',
-          description: '${explicitSkip ? 'Skipped' : 'Missed'} ${widget.medicineName}',
-        );
-      } catch (e) {
-        debugPrint('Activity log error: $e');
-      }
-
-      if (mounted) {
-        if (explicitSkip) {
-          AppSnackBar.showSuccess(context, "Dose skipped. Logged successfully.");
-        }
-        if (Navigator.canPop(context)) {
-          Navigator.of(context).pop();
-        } else {
-          SystemNavigator.pop();
-        }
-      }
-    } catch (e) {
-      debugPrint("Error logging missed/skipped dose: $e");
-    }
-  }
-
-  Future<void> _informFamilyOfMissedDose() async {
-    try {
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null) return;
-
-      // 1. Get user profile name
-      final profile = await _supabase
-          .from('profiles')
-          .select('full_name')
-          .eq('id', userId)
-          .maybeSingle();
-      final userName = profile?['full_name'] ?? "Someone";
-
-      // 2. Find group_id
-      final membership = await _supabase
-          .from('family_members')
-          .select('group_id')
-          .eq('user_id', userId)
-          .maybeSingle();
-      
-      if (membership == null) return;
-      final groupId = membership['group_id'];
-
-      // 3. Send WhatsApp alerts to admins via NotificationService
-      await NotificationService().sendMissedMedicineAlert(
-        patientName: userName,
-        medicineName: widget.medicineName,
-        scheduledTime: widget.scheduledTime,
-      );
-    } catch (e) {
-      debugPrint("Error informing family: $e");
-    }
-  }
-
-  Future<void> _logDoseStatus(String status) async {
-    final userId = _supabase.auth.currentUser?.id;
-    if (userId == null) return;
-    
-    // ✅ medicationId empty ya invalid ho to skip karo
-    if (widget.medicationId.isEmpty) {
-      debugPrint("Skipping log — no valid medicationId");
-      return;
-    }
-
-    await _supabase.from('medicine_logs').insert({
-      'user_id': userId,
-      'medication_id': widget.medicationId,
-      'medicine_name': widget.medicineName,
-      'dosage': widget.dosage,
-      'status': status,
-      'alarm_slot': widget.alarmSlot,
-      'scheduled_time': widget.scheduledTime.toIso8601String(),
-      'created_at': DateTime.now().toIso8601String(),
-    });
-  }
-
-  Future<void> _onTakeItWithFeedback() async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
-    await _onTakeIt();
-    if (mounted) setState(() => _isProcessing = false);
-  }
-
-  Future<void> _onTakeLaterWithFeedback() async {
-    if (_isProcessing) return;
-    
-    // Show snooze options
-    final int? mins = await showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: const Color(0xFF1A2332),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Snooze for...", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 12, runSpacing: 12,
-              children: [
-                _snoozeChip(ctx, 10, "10 mins"),
-                _snoozeChip(ctx, 20, "20 mins"),
-                _snoozeChip(ctx, 30, "30 mins"),
-                _snoozeChip(ctx, 60, "1 hour"),
-              ],
-            ),
-            const SizedBox(height: 24),
-          ],
-        ),
-      )
-    );
-
-    if (mins == null) return; // cancelled
-
-    setState(() => _isProcessing = true);
-    await _onTakeLater(mins);
-    if (mounted) setState(() => _isProcessing = false);
-  }
-
-  Widget _snoozeChip(BuildContext ctx, int minutes, String label) {
-    return ActionChip(
-      label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-      backgroundColor: Colors.white.withOpacity(0.1),
-      labelStyle: const TextStyle(color: Colors.white),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: Colors.transparent)),
-      onPressed: () => Navigator.pop(ctx, minutes),
-    );
-  }
-
-  Future<void> _onSkipWithFeedback() async {
-    if (_isProcessing) return;
-    
-    // Confirm skip
-    final bool? confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A2332),
-        title: const Text("Skip Dose?", style: TextStyle(color: Colors.white)),
-        content: Text("Are you sure you want to skip taking ${widget.medicineName}?", style: const TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel", style: TextStyle(color: Colors.grey))),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[400]),
-            child: const Text("Yes, Skip", style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      )
-    );
-
-    if (confirm != true) return;
-
-    setState(() => _isProcessing = true);
-    await _handleMissedDose(explicitSkip: true);
-    if (mounted) setState(() => _isProcessing = false);
-  }
-
-  Future<void> _onTakeIt() async {
-    if (_isActionTaken) return;
-    _isActionTaken = true;
-    _autoDismissTimer?.cancel();
-    try {
-      await Alarm.stop(widget.alarmId);
-
-      // Guard: If no valid medicationId, just dismiss (fallback alarm)
-      if (widget.medicationId.isEmpty) {
-        debugPrint("No medicationId — dismissing alarm without DB update");
-        if (mounted) {
-          AppSnackBar.showSuccess(context, "Medicine marked as taken!");
-          if (Navigator.canPop(context)) {
-            Navigator.of(context).pop();
-          } else {
-            SystemNavigator.pop();
-          }
-        }
+      if (remaining == null || remaining <= Duration.zero) {
+        _handleMissedDose();
         return;
       }
 
-      // Fresh DB se latest qty fetch karo
-      final latest = await _supabase
-          .from('medications')
-          .select('qty, frequency')
-          .eq('id', widget.medicationId)
-          .maybeSingle();
+      _autoDismissTimer = Timer(remaining, _handleMissedDose);
+    });
+  }
 
-      if (latest == null) {
-        debugPrint("Medication not found in DB — may have been deleted");
-        if (mounted) {
-          AppSnackBar.showSuccess(context, "Medicine marked as taken!");
-          if (Navigator.canPop(context)) {
-            Navigator.of(context).pop();
-          } else {
-            SystemNavigator.pop();
-          }
-        }
-        return;
+  Future<void> _handleMissedDose() async {
+    if (_context != null) {
+      if (_context!.isSingle) {
+        await AlarmActionEngine.instance.missSingleDose(_context!);
+      } else {
+        await AlarmActionEngine.instance.missGroupDoses(_context!);
       }
+    }
+    _dismissScreen();
+  }
 
-      final currentQty = int.tryParse(latest['qty'].toString()) ?? 0;
-      final newQty = (currentQty - 1).clamp(0, 99999);
-
-      await _supabase
-          .from('medications')
-          .update({'qty': newQty})
-          .eq('id', widget.medicationId);
-
-      if (newQty == 0) {
-        await _supabase
-            .from('medications')
-            .update({'is_active': false})
-            .eq('id', widget.medicationId);
+  void _dismissScreen() {
+    if (mounted) {
+      if (Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      } else {
+        SystemNavigator.pop();
       }
+    }
+  }
 
-      await _logDoseStatus('taken');
-      try {
-        await ActivityService.log(
-          actionType: 'MEDICINE_TAKEN',
-          description: 'Took ${widget.medicineName}',
-        );
-      } catch (e) {
-        debugPrint('Activity log error: $e');
+  Future<void> _onTakeItWithFeedback({double? actualDose}) async {
+    if (_isProcessing || _context == null) return;
+    setState(() => _isProcessing = true);
+    
+    try {
+      if (_context!.isSingle) {
+        await AlarmActionEngine.instance.takeSingleDose(_context!, actualDose: actualDose);
+      } else {
+        await AlarmActionEngine.instance.takeGroupDoses(_context!, _context!.medicationIds);
       }
-
-      // Clean up cached alarm data
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('cached_med_${widget.alarmId}');
-      } catch (_) {}
-
+      
       if (mounted) {
-        if (newQty == 0) {
-          AppSnackBar.showError(context, "Medicine stock is over. Please refill.");
-        } else {
-          AppSnackBar.showSuccess(context, "Great! Medicine marked as taken");
-        }
-        if (Navigator.canPop(context)) {
-          Navigator.of(context).pop();
-        } else {
-          SystemNavigator.pop();
-        }
+        AppSnackBar.showSuccess(context, "Great! Medicine marked as taken");
+        _dismissScreen();
       }
     } catch (e) {
       debugPrint("Error in _onTakeIt: $e");
       if (mounted) {
         AppSnackBar.showError(context, "Failed to update: $e");
+        setState(() => _isProcessing = false);
       }
     }
   }
 
-  Future<void> _onTakeLater(int snoozeMinutes) async {
-    if (_isActionTaken) return;
-    _isActionTaken = true;
-    _autoDismissTimer?.cancel();
+  Future<void> _onTakeLaterWithFeedback(int minutes) async {
+    if (_isProcessing || _context == null) return;
+    setState(() => _isProcessing = true);
+    
     try {
-      await Alarm.stop(widget.alarmId);
-
-      final baseId = widget.isSnooze ? widget.alarmId - kSnoozeOffset : widget.alarmId;
-
-      await _alarmService.scheduleSnoozeAlarm(
-        originalId: baseId,
-        medicineName: widget.medicineName,
-        originalTime: widget.scheduledTime,
-        snoozeDurationMinutes: snoozeMinutes,
-      );
-
-      // Only log if valid medicationId
-      if (widget.medicationId.isNotEmpty) {
-        await _logDoseStatus('snoozed');
+      if (_context!.isSingle) {
+        await AlarmActionEngine.instance.snoozeSingleDose(_context!, minutes);
+      } else {
+        await AlarmActionEngine.instance.snoozeGroupDoses(_context!, _context!.medicationIds, minutes);
       }
 
-      // Clean up cached alarm data
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('cached_med_${widget.alarmId}');
-      } catch (_) {}
-
       if (mounted) {
-        AppSnackBar.showSuccess(context, "Reminder set for $snoozeMinutes min later");
-        if (Navigator.canPop(context)) {
-          Navigator.of(context).pop();
-        } else {
-          SystemNavigator.pop();
-        }
+        AppSnackBar.showSuccess(context, "Reminder set for $minutes min later");
+        _dismissScreen();
       }
     } catch (e) {
       debugPrint("Error in _onTakeLater: $e");
       if (mounted) {
         AppSnackBar.showError(context, "Failed to snooze: $e");
+        setState(() => _isProcessing = false);
+      }
+    }
+  }
+  
+  void _showSnoozeOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A2332),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("Snooze Reminder", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: const Icon(LucideIcons.clock, color: Colors.amber),
+                title: const Text("Snooze for 15 minutes", style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _onTakeLaterWithFeedback(15);
+                },
+              ),
+              ListTile(
+                leading: const Icon(LucideIcons.clock, color: Colors.amber),
+                title: const Text("Snooze for 30 minutes", style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _onTakeLaterWithFeedback(30);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showDoseAdjustmentDialog() {
+    if (_context == null || !_context!.isSingle) return;
+    final dosageString = _context!.dosages.first;
+    final match = RegExp(r'^([\d\.]+)').firstMatch(dosageString);
+    double currentDose = 1.0;
+    if (match != null) {
+      currentDose = double.tryParse(match.group(1) ?? '1.0') ?? 1.0;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        double tempDose = currentDose;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1A2332),
+              title: const Text("Adjust Dose", style: TextStyle(color: Colors.white)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text("How much did you actually take?", style: TextStyle(color: Colors.white70)),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline, color: Colors.white),
+                        onPressed: () {
+                          if (tempDose > 0.25) setDialogState(() => tempDose -= 0.25);
+                        },
+                      ),
+                      Text(tempDose.toStringAsFixed(2).replaceAll('.00', ''), style: const TextStyle(fontSize: 24, color: Colors.white, fontWeight: FontWeight.bold)),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+                        onPressed: () {
+                          setDialogState(() => tempDose += 0.25);
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _onTakeItWithFeedback(actualDose: tempDose);
+                  },
+                  child: const Text("Log Dose", style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          }
+        );
+      }
+    );
+  }
+
+  Future<void> _onSkipWithFeedback() async {
+    if (_isProcessing || _context == null) return;
+    setState(() => _isProcessing = true);
+
+    try {
+      if (_context!.isSingle) {
+        await AlarmActionEngine.instance.skipSingleDose(_context!);
+      } else {
+        await AlarmActionEngine.instance.skipGroupDoses(_context!);
+      }
+
+      if (mounted) {
+        AppSnackBar.showSuccess(context, "Dose skipped");
+        _dismissScreen();
+      }
+    } catch (e) {
+      debugPrint("Error in _onSkip: $e");
+      if (mounted) {
+        AppSnackBar.showError(context, "Failed to skip: $e");
+        setState(() => _isProcessing = false);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0D1117),
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
+
+    // For group alarms show a human-readable slot name, not the raw slotKey
+    String _slotLabel(String key) {
+      if (key.startsWith('custom')) return 'Custom Time Reminder';
+      switch (key) {
+        case 'morning': return 'Morning Medicines';
+        case 'afternoon': return 'Afternoon Medicines';
+        case 'evening': return 'Evening Medicines';
+        case 'night': return 'Night Medicines';
+        default: return 'Medicine Reminder';
+      }
+    }
+    final medName = _context!.isGroup
+        ? _slotLabel((_context!.slotKey ?? '').split('_').first)
+        : _context!.medicineNames.first;
+    final dosage = _context!.isGroup
+        ? _context!.medicineNames.join(', ')
+        : _context!.dosages.first;
+    final imagePath = _context!.isSingle ? _context!.imagePaths.first : null;
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.light,
       child: PopScope(
-        canPop: false, // Prevent back button from dismissing
+        canPop: false,
         child: Scaffold(
-        body: Container(
-          width: double.infinity,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFF0D1117), Color(0xFF1A2332)],
+          body: Container(
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFF0D1117), Color(0xFF1A2332)],
+              ),
             ),
-          ),
-          child: SafeArea(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Spacer(),
-                // Large Rounded Image
-                Container(
-                  width: 150,
-                  height: 150,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.1),
-                    border: Border.all(color: Colors.white.withOpacity(0.2), width: 2),
+            child: SafeArea(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Spacer(),
+                  Container(
+                    width: 150,
+                    height: 150,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.1),
+                      border: Border.all(color: Colors.white.withOpacity(0.2), width: 2),
+                    ),
+                    child: ClipOval(
+                      child: imagePath != null && imagePath.isNotEmpty
+                          ? FutureBuilder<bool>(
+                              future: File(imagePath).exists(),
+                              builder: (context, snapshot) {
+                                if (snapshot.data == true) {
+                                  return Image.file(
+                                    File(imagePath),
+                                    fit: BoxFit.cover,
+                                  );
+                                }
+                                return const Icon(LucideIcons.pill, size: 80, color: Colors.white70);
+                              },
+                            )
+                          : const Icon(LucideIcons.pill, size: 80, color: Colors.white70),
+                    ),
                   ),
-                  child: ClipOval(
-                    child: widget.imagePath != null && widget.imagePath!.isNotEmpty
-                        ? FutureBuilder<bool>(
-                            future: File(widget.imagePath!).exists(),
-                            builder: (context, snapshot) {
-                              if (snapshot.data == true) {
-                                return Image.file(
-                                  File(widget.imagePath!),
-                                  fit: BoxFit.cover,
-                                );
-                              }
-                              return const Icon(LucideIcons.pill, size: 80, color: Colors.white70);
-                            },
-                          )
-                        : const Icon(LucideIcons.pill, size: 80, color: Colors.white70),
+                  const SizedBox(height: 30),
+                  AnimatedBuilder(
+                    animation: _bellAnimation,
+                    builder: (_, child) => Transform.rotate(
+                      angle: _bellAnimation.value,
+                      child: const Icon(LucideIcons.bellRing, size: 40, color: Color(0xFFF59E0B)),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 30),
-                AnimatedBuilder(
-                  animation: _bellAnimation,
-                  builder: (_, child) => Transform.rotate(
-                    angle: _bellAnimation.value,
-                    child: const Icon(LucideIcons.bellRing, size: 40, color: Color(0xFFF59E0B)),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  "MEDICATION REMINDER",
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 14,
-                    letterSpacing: 2,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Text(
-                    widget.medicineName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 36,
+                  const SizedBox(height: 20),
+                  const Text(
+                    "MEDICATION REMINDER",
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 14,
+                      letterSpacing: 2,
                       fontWeight: FontWeight.bold,
                     ),
-                    textAlign: TextAlign.center,
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  widget.dosage,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 20,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: widget.qty == 0
-                        ? Colors.red.withOpacity(0.2)
-                        : widget.qty <= 3
-                            ? Colors.orange.withOpacity(0.2)
-                            : Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: widget.qty == 0
-                          ? Colors.red.withOpacity(0.5)
-                          : widget.qty <= 3
-                              ? Colors.orange.withOpacity(0.5)
-                              : Colors.transparent,
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Text(
+                      medName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
-                  child: Text(
-                    widget.qty == 0
-                        ? "Out of stock!"
-                        : widget.qty <= 3
-                            ? "Only ${widget.qty} left!"
-                            : "Stock: ${widget.qty} remaining",
-                    style: TextStyle(
-                      color: widget.qty == 0
-                          ? Colors.red[300]
-                          : widget.qty <= 3
-                              ? Colors.orange[300]
-                              : Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Text(
+                      dosage,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 20,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
-                ),
-                const Spacer(),
-                // Buttons
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
-                  child: Column(
-                    children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: _buildAlarmButton(
-                          label: "I Took It",
-                          icon: LucideIcons.checkCircle,
-                          color: Colors.green[600]!,
-                          onTap: _onTakeItWithFeedback,
-                          isLoading: _isProcessing,
+                  const Spacer(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildAlarmButton(
+                                label: "Snooze",
+                                color: Colors.amber[700]!,
+                                onTap: _showSnoozeOptions,
+                                isLoading: _isProcessing,
+                              ),
+                            ),
+                            const SizedBox(width: 20),
+                            Expanded(
+                              child: _buildAlarmButton(
+                                label: "I Took It",
+                                color: Colors.green[600]!,
+                                onTap: _onTakeItWithFeedback,
+                                isLoading: _isProcessing,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildAlarmButton(
-                              label: "Snooze",
-                              icon: LucideIcons.clock,
-                              color: Colors.amber[700]!,
-                              onTap: _onTakeLaterWithFeedback,
-                              isLoading: _isProcessing,
-                              isSmall: true,
+                        const SizedBox(height: 15),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            TextButton(
+                              onPressed: _isProcessing ? null : _onSkipWithFeedback,
+                              child: const Text("Skip Dose", style: TextStyle(color: Colors.white54, fontSize: 16)),
                             ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildAlarmButton(
-                              label: "Skip",
-                              icon: LucideIcons.xCircle,
-                              color: Colors.red[400]!.withOpacity(0.8),
-                              onTap: _onSkipWithFeedback,
-                              isLoading: _isProcessing,
-                              isSmall: true,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                            if (_context?.isSingle == true)
+                              TextButton(
+                                onPressed: _isProcessing ? null : _showDoseAdjustmentDialog,
+                                child: const Text("Change Dose", style: TextStyle(color: Colors.white54, fontSize: 16)),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
 
   Widget _buildAlarmButton({
     required String label,
-    required IconData icon,
     required Color color,
     required VoidCallback onTap,
     bool isLoading = false,
-    bool isSmall = false,
   }) {
-    return ElevatedButton.icon(
+    return ElevatedButton(
       onPressed: isLoading ? null : onTap,
-      icon: isLoading 
-          ? const SizedBox.shrink() 
-          : Icon(icon, size: isSmall ? 20 : 28),
-      label: isLoading
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        disabledBackgroundColor: color.withOpacity(0.6),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        elevation: 10,
+        shadowColor: color.withOpacity(0.5),
+      ),
+      child: isLoading
           ? const SizedBox(
               width: 24,
               height: 24,
@@ -591,22 +473,11 @@ class _AlarmScreenState extends State<AlarmScreen> with SingleTickerProviderStat
             )
           : Text(
               label,
-              style: TextStyle(
-                fontSize: isSmall ? 16 : 20,
+              style: const TextStyle(
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
             ),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: color,
-        disabledBackgroundColor: color.withOpacity(0.6),
-        foregroundColor: Colors.white,
-        padding: EdgeInsets.symmetric(vertical: isSmall ? 16 : 20),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(isSmall ? 16 : 24),
-        ),
-        elevation: 8,
-        shadowColor: color.withOpacity(0.5),
-      ),
     );
   }
 }

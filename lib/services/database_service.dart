@@ -19,4 +19,28 @@ class DatabaseService {
       debugPrint("DB ERROR: $e");
     }
   }
+
+  Future<List<Map<String, dynamic>>> insertMedicinesReturning(
+    List<Map<String, dynamic>> medicines,
+  ) async {
+    try {
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) {
+        debugPrint("DB ERROR: No authenticated user");
+        return const [];
+      }
+
+      final dataToInsert =
+          medicines.map((m) => {...m, 'user_id': userId}).toList();
+
+      final response = await supabase
+          .from('medications')
+          .insert(dataToInsert)
+          .select();
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      debugPrint("DB ERROR: $e");
+      return const [];
+    }
+  }
 }

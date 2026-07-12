@@ -16,7 +16,11 @@ class AppSnackBar {
         backgroundColor: Colors.green.shade600,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        margin: const EdgeInsets.all(16),
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height - 180,
+          left: 16,
+          right: 16,
+        ),
       ),
     );
   }
@@ -35,7 +39,11 @@ class AppSnackBar {
         backgroundColor: Colors.red.shade500,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        margin: const EdgeInsets.all(16),
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height - 180,
+          left: 16,
+          right: 16,
+        ),
       ),
     );
   }
@@ -54,7 +62,11 @@ class AppSnackBar {
         backgroundColor: const Color(0xFF0EA5E9),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        margin: const EdgeInsets.all(16),
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).size.height - 180,
+          left: 16,
+          right: 16,
+        ),
       ),
     );
   }

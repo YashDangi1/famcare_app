@@ -4,6 +4,10 @@ import '../settings_screen.dart';
 import 'alarm_setup_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../login_screen.dart';
+import 'safety/medical_id_screen.dart';
+import 'safety/emergency_center_screen.dart';
+import 'settings/family_notifications_screen.dart';
+import 'support/help_center_screen.dart';
 
 class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
@@ -48,10 +52,8 @@ class MoreScreen extends StatelessWidget {
             icon: LucideIcons.bellRing,
             title: 'Family Notifications',
             subtitle: 'Alerts for missed meds & vitals',
-            statusText: 'Coming Soon',
-            statusColor: Colors.grey,
             onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Family Notification Settings coming soon')));
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const FamilyNotificationsScreen()));
             },
           ),
           
@@ -63,10 +65,28 @@ class MoreScreen extends StatelessWidget {
             iconColor: Colors.red,
             title: 'Medical ID',
             subtitle: 'Allergies and emergency contacts',
-            statusText: 'Coming Soon',
-            statusColor: Colors.grey,
             onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Medical ID feature coming soon')));
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const MedicalIdScreen()));
+            },
+          ),
+          _buildRichTile(
+            context,
+            icon: LucideIcons.siren,
+            iconColor: Colors.red,
+            title: 'Emergency Center',
+            subtitle: 'Call ambulance & contacts',
+            onTap: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const EmergencyCenterScreen()));
+            },
+          ),
+          _buildRichTile(
+            context,
+            icon: LucideIcons.helpCircle,
+            iconColor: Colors.blue,
+            title: 'Help & Support',
+            subtitle: 'Contact support, legal, FAQ',
+            onTap: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const HelpCenterScreen()));
             },
           ),
           

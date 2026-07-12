@@ -65,10 +65,14 @@ class MainActivity : FlutterActivity() {
         val alarmId = intent?.getIntExtra("alarm_id", -1) ?: -1
         if (alarmId != -1) {
             pendingAlarmId = alarmId
-            // Also store in SharedPreferences as backup
+            // C14: Fixed SharedPreferences cross-store mismatch.
+            // Flutter's SharedPreferences plugin reads from "FlutterSharedPreferences" with "flutter." prefix.
+            // Previously this was written to "alarm_plugin_prefs" which Dart could NEVER read via
+            // SharedPreferences.getInstance(). Now writing to the correct store so
+            // AlarmRecoveryManager.restoreActiveAlarmOnStartup() can find the ringing alarm ID.
             try {
-                val prefs = getSharedPreferences("alarm_plugin_prefs", MODE_PRIVATE)
-                prefs.edit().putInt("ringing_alarm_id", alarmId).apply()
+                val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+                prefs.edit().putInt("flutter.ringing_alarm_id", alarmId).apply()
             } catch (_: Exception) {}
         }
     }
@@ -95,10 +99,11 @@ class MainActivity : FlutterActivity() {
                     }
                     // Fallback: check SharedPreferences
                     try {
-                        val prefs = getSharedPreferences("alarm_plugin_prefs", MODE_PRIVATE)
-                        val alarmId = prefs.getInt("ringing_alarm_id", -1)
+                        // C14: Read from FlutterSharedPreferences (same store Dart reads from)
+                        val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+                        val alarmId = prefs.getInt("flutter.ringing_alarm_id", -1)
                         if (alarmId != -1) {
-                            prefs.edit().remove("ringing_alarm_id").apply()
+                            prefs.edit().remove("flutter.ringing_alarm_id").apply()
                             result.success(alarmId)
                         } else {
                             result.success(null)

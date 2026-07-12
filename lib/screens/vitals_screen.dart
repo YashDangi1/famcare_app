@@ -9,8 +9,9 @@ import 'vitals_input_sheet.dart';
 class VitalsScreen extends StatefulWidget {
   final String? targetUserId;
   final String? targetUserName;
+  final bool hideAppBar;
 
-  const VitalsScreen({super.key, this.targetUserId, this.targetUserName});
+  const VitalsScreen({super.key, this.targetUserId, this.targetUserName, this.hideAppBar = false});
 
   @override
   State<VitalsScreen> createState() => _VitalsScreenState();
@@ -127,7 +128,7 @@ class _VitalsScreenState extends State<VitalsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
+      appBar: widget.hideAppBar ? null : AppBar(
         title: Text(
           widget.targetUserName != null
               ? "${widget.targetUserName}'s Health Readings"

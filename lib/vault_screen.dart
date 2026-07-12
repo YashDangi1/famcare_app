@@ -9,8 +9,9 @@ import 'services/activity_service.dart';
 class VaultScreen extends StatefulWidget {
   final String? targetUserId;
   final String? targetUserName;
+  final bool hideAppBar;
 
-  const VaultScreen({super.key, this.targetUserId, this.targetUserName});
+  const VaultScreen({super.key, this.targetUserId, this.targetUserName, this.hideAppBar = false});
 
   @override
   State<VaultScreen> createState() => _VaultScreenState();
@@ -230,7 +231,7 @@ class _VaultScreenState extends State<VaultScreen> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
+      appBar: widget.hideAppBar ? null : AppBar(
         title: Text(widget.targetUserName != null ? "${widget.targetUserName}'s Records" : "My Records", style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
