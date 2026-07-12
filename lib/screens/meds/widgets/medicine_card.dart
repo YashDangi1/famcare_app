@@ -7,6 +7,7 @@ import '../../../models/medicine_model.dart';
 import '../../medicine_log_screen.dart';
 import '../../../theme/app_theme.dart';
 import '../../../services/alarm_action_engine.dart';
+import '../../../widgets/cached_local_image.dart';
 
 
 class MedicineCard extends StatelessWidget {
@@ -146,9 +147,11 @@ class MedicineCard extends StatelessWidget {
                           child: Container(
                             width: 70, height: 70,
                             color: primaryColor.withValues(alpha: 0.1),
-                            child: med.imagePath != null && File(med.imagePath!).existsSync()
-                                ? Image.file(File(med.imagePath!), fit: BoxFit.cover)
-                                : Icon(LucideIcons.pill, color: primaryColor, size: 30),
+                            child: CachedLocalImage(
+                              imagePath: med.imagePath,
+                              fit: BoxFit.cover,
+                              fallback: Icon(LucideIcons.pill, color: primaryColor, size: 30),
+                            ),
                           ),
                         ),
                       ),

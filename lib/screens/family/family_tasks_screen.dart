@@ -19,13 +19,45 @@ class FamilyTasksScreen extends ConsumerStatefulWidget {
 
 class _FamilyTasksScreenState extends ConsumerState<FamilyTasksScreen> {
   String _filter = 'open'; // 'open', 'done', 'overdue'
+  List<FamilyTask>? _tasks;
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Fetch data once in initState instead of FutureBuilder in build
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fetchTasks();
+    });
+  }
+
+  Future<void> _fetchTasks() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final tasks = await ref.read(familyTaskServiceProvider).listTasks(widget.groupId, status: _filter == 'overdue' ? 'open' : _filter);
+      if (mounted) {
+        setState(() {
+          _tasks = tasks;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // We can't use familyTasksProvider directly with filter easily unless we pass filter to it.
-    // Let's refetch tasks via service directly or update the provider to accept filter.
-    // For simplicity here, we'll watch a custom future or just use the provider if it supports filtering.
-    // Let's use a FutureBuilder for custom queries.
     
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -38,17 +70,16 @@ class _FamilyTasksScreenState extends ConsumerState<FamilyTasksScreen> {
         children: [
           _buildFilterChips(),
           Expanded(
-            child: FutureBuilder<List<FamilyTask>>(
-              future: ref.read(familyTaskServiceProvider).listTasks(widget.groupId, status: _filter == 'overdue' ? 'open' : _filter),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
+            child: Builder(
+              builder: (context) {
+                if (_isLoading) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
+                if (_error != null) {
+                  return Center(child: Text('Error: $_error'));
                 }
                 
-                var tasks = snapshot.data ?? [];
+                var tasks = _tasks ?? [];
                 if (_filter == 'overdue') {
                   tasks = tasks.where((t) => t.dueAt != null && t.dueAt!.isBefore(DateTime.now())).toList();
                 }
@@ -58,9 +89,7 @@ class _FamilyTasksScreenState extends ConsumerState<FamilyTasksScreen> {
                 }
 
                 return RefreshIndicator(
-                  onRefresh: () async {
-                    setState(() {}); // Trigger FutureBuilder rebuild
-                  },
+                  onRefresh: _fetchTasks,
                   child: ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: tasks.length,
@@ -104,7 +133,10 @@ class _FamilyTasksScreenState extends ConsumerState<FamilyTasksScreen> {
     return FilterChip(
       label: Text(label),
       selected: isSelected,
-      onSelected: (_) => setState(() => _filter = value),
+      onSelected: (_) {
+        setState(() => _filter = value);
+        _fetchTasks();
+      },
       selectedColor: color.withOpacity(0.2),
       labelStyle: TextStyle(color: isSelected ? color : Colors.black87),
     );

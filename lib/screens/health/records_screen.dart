@@ -28,6 +28,7 @@ class _RecordsScreenState extends ConsumerState<RecordsScreen> {
   String _selectedCategory = 'All';
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  final Map<String, String> _resolvedUrls = {};
   final List<String> _categories = [
     'All', 'Prescription', 'Lab Report', 'Imaging', 'Discharge Summary', 'Doctor Note', 'Vaccine', 'Other'
   ];
@@ -169,6 +170,16 @@ class _RecordsScreenState extends ConsumerState<RecordsScreen> {
                 );
               },
               data: (records) {
+                // Trigger URL resolution for new records
+                for (var r in records) {
+                  if (!_resolvedUrls.containsKey(r.id)) {
+                    _resolvedUrls[r.id] = ''; // Pending
+                    _resolveImageUrl(r.fileUrl).then((url) {
+                      if (mounted) setState(() => _resolvedUrls[r.id] = url);
+                    });
+                  }
+                }
+
                 // Filter locally by search query
                 final filteredRecords = records.where((r) {
                   if (_searchQuery.isEmpty) return true;
@@ -327,12 +338,14 @@ class _RecordsScreenState extends ConsumerState<RecordsScreen> {
                 children: [
                   Container(color: Colors.grey.shade100),
                   // Image
-                  FutureBuilder<String>(
-                    future: _resolveImageUrl(record.fileUrl),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                  Builder(
+                    builder: (context) {
+                      final url = _resolvedUrls[record.id];
+                      if (url == null || url.isEmpty) {
+                        return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                      }
                       return Image.network(
-                        snapshot.data!,
+                        url,
                         fit: BoxFit.cover,
                         errorBuilder: (context, error, stackTrace) =>
                           const Center(child: Icon(LucideIcons.imageOff, color: Colors.grey, size: 40)),

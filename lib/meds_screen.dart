@@ -11,6 +11,7 @@ import 'services/alarm_service.dart';
 import 'services/slot_preferences_service.dart';
 import 'models/medicine_model.dart';
 import 'screens/alarm_setup_screen.dart';
+import '../widgets/cached_local_image.dart';
 import 'screens/medicine_log_screen.dart';
 import 'utils/snackbar_utils.dart';
 import 'services/alarm_action_engine.dart';
@@ -1356,11 +1357,11 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                 height: 50,
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
+                child: CachedLocalImage(
+                  imagePath: nextMed.imagePath,
+                  fit: BoxFit.cover,
+                  fallback: const Icon(LucideIcons.pill, color: AppTheme.cyanAccent, size: 24),
                 ),
-                child: nextMed.imagePath != null && File(nextMed.imagePath!).existsSync()
-                    ? ClipRRect(borderRadius: BorderRadius.circular(14), child: Image.file(File(nextMed.imagePath!), fit: BoxFit.cover))
-                    : const Icon(LucideIcons.pill, color: AppTheme.cyanAccent, size: 24),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -1982,14 +1983,13 @@ class _MedsScreenState extends ConsumerState<MedsScreen> {
                     width: 60,
                     height: 60,
                     color: Colors.grey[200],
-                    child: med.imagePath != null &&
-                            File(med.imagePath!).existsSync()
-                        ? Image.file(File(med.imagePath!),
-                            fit: BoxFit.cover,
-                            color: Colors.grey,
-                            colorBlendMode: BlendMode.saturation)
-                        : Icon(LucideIcons.pill,
-                            color: Colors.grey[400], size: 28),
+                    child: CachedLocalImage(
+                      imagePath: med.imagePath,
+                      fit: BoxFit.cover,
+                      color: Colors.grey,
+                      colorBlendMode: BlendMode.saturation,
+                      fallback: Icon(LucideIcons.pill, color: Colors.grey[400], size: 28),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 14),

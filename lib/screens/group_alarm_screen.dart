@@ -11,6 +11,7 @@ import '../utils/snackbar_utils.dart';
 import '../main.dart' show activeAlarmIdNotifier;
 import 'package:intl/intl.dart';
 import 'package:alarm/alarm.dart';
+import '../widgets/cached_local_image.dart';
 
 class GroupAlarmScreen extends StatefulWidget {
   final int alarmId;
@@ -432,9 +433,11 @@ class _GroupAlarmScreenState extends State<GroupAlarmScreen> with SingleTickerPr
                               width: 48,
                               height: 48,
                               decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-                              child: imagePath != null && imagePath.isNotEmpty && File(imagePath).existsSync()
-                                  ? ClipRRect(borderRadius: BorderRadius.circular(12), child: Image.file(File(imagePath), fit: BoxFit.cover))
-                                  : const Icon(LucideIcons.pill, color: Colors.white, size: 24),
+                              child: CachedLocalImage(
+                                imagePath: imagePath,
+                                fit: BoxFit.cover,
+                                fallback: const Icon(LucideIcons.pill, color: Colors.white, size: 24),
+                              ),
                             ),
                           ),
                         );
